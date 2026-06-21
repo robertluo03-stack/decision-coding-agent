@@ -1,0 +1,26 @@
+[project]
+name = "decision-coder"
+version = "0.1.0"
+description = "面向经营决策与运筹优化场景的垂直 Coding Agent"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-deepseek>=1.0.0",
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "loguru>=0.7.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Workspace runtime files
+src/workspace/data/*
+src/workspace/reports/*
+src/workspace/tests/*
+!src/workspace/data/.gitkeep
+!src/workspace/reports/.gitkeep
+!src/workspace/tests/.gitkeep
+
+# OS
+Thumbs.db
+.DS_Store
