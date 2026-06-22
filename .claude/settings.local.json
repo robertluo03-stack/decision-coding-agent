@@ -8,7 +8,10 @@
       "Bash(python test_coder.py)",
       "Bash(python -m py_compile src/agent/nodes/executor.py)",
       "Bash(python -m py_compile tests/test_executor.py)",
-      "Bash(python tests/test_executor.py)"
+      "Bash(python tests/test_executor.py)",
+      "Bash(python -m py_compile src/agent/nodes/reporter.py)",
+      "Bash(python -m py_compile tests/test_reporter.py)",
+      "Bash(python tests/test_reporter.py)"
     ]
   }
 }

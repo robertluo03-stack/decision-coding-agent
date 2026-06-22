@@ -211,7 +211,18 @@ Executor节点在 `src/agent/nodes/executor.py` 中。
 
 注意：这个节点是Human-in-the-loop的核心，面试时会重点展示。
 ```
+## 测试要求
+同时写 tests/test_debugger.py，覆盖：
+1. retry_count >= 2 强制中止（不调用LLM，不交互）
+2. 选择1：AI_FIX（mock LLM和input）
+3. 选择2：USER_FIX（mock LLM和input）
+4. 选择3：SKIP
+5. 选择4：ABORT
+6. 无效输入：视为SKIP
+7. 修复代码提取：正确提取```python```代码块
+8. 危险代码修复：如果LLM返回的修复代码含os.system，拒绝并ABORT
 
+使用 unittest.mock.patch 模拟 builtins.input 和 LLM调用。
 ---
 
 ## 任务 6：Reporter 节点
@@ -243,7 +254,8 @@ Executor节点在 `src/agent/nodes/executor.py` 中。
 ## 上下文
 AgentState定义在 `src/agent/state.py` 中。
 ```
-
+## 验收标准：
+成功/中止两种报告格式正确，文件写入workspace/reports/
 ---
 
 ## 任务 7：Graph 组装

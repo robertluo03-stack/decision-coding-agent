@@ -55,3 +55,22 @@
   - 移除 loguru 依赖（改为纯 print，后续 Week2 恢复日志系统）
   - 58/58 测试通过（tests/test_executor.py，12 个测试场景）
   - Python 编译检查通过
+
+## 2026-06-22 Week1-Day3 任务6：Reporter 节点
+- 目标：实现 src/agent/nodes/reporter.py，生成 Markdown 格式执行报告
+- 输入：state["user_query"], state["plan"], state["execution_result"], state["error"], state["retry_count"], state["human_feedback"]
+- 输出：{"final_report": "完整 Markdown 报告字符串"}
+- 副作用：报告写入 workspace/reports/report_<timestamp>.md
+- 实现要点：
+  - 三种报告模式：成功（✅ 执行成功）、异常（⚠️ 执行异常）、中止（🛑 用户中止）
+  - human_feedback="ABORT" → 标题为"任务中止报告"
+  - 无 error 且非 ABORT → 标题为"执行报告"，含结果摘要
+  - 报告结构：任务描述 → 执行计划 → 生成代码 → 执行结果 → 错误与调试记录 → 附录
+  - human_feedback 内部编码转可读标签（AI_FIX / USER_FIX / SKIP / ABORT）
+  - 使用 datetime 生成时间戳文件名（report_YYYYMMDD_HHMMSS.md）
+  - reports/ 目录不存在时自动创建
+  - 边界处理：空 query/plan 显示占位文本，None execution_result 跳过该章节
+  - 移除 loguru 依赖（改为 print）
+  - 导出 run = reporter_node 别名（兼容 graph.py 入口）
+  - 60/60 测试通过（tests/test_reporter.py，10 个测试场景）
+  - Python 编译检查通过
