@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.agent.nodes.executor import run  # executor_node 的别名
 from src.agent.nodes.executor import _has_dangerous_code
 from src.agent.nodes.executor import _check_syntax
+from src.agent.nodes.executor import _build_error
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +370,9 @@ def test_stderr_captured() -> None:
 
     _check("stdout message" in (result["execution_result"] or ""),
            "stdout 正确捕获")
-    _check("stderr message" in (result["error"] or ""),
-           f"stderr 正确捕获 (实际: {result['error']!r})")
+    # 写入 stderr 但 returncode=0 → _build_error 返回 None（非错误）
+    _check(result["error"] is None,
+           f"rc=0 时 stderr 不视为 error (实际: {result['error']!r})")
 
 
 # ===================================================================
@@ -423,6 +425,81 @@ def test_edge_no_output() -> None:
 
 
 # ===================================================================
+# 测试 13 — returncode != 0 但 stderr 为空 → 仍报告 error
+# ===================================================================
+
+def test_nonzero_exit_no_stderr() -> None:
+    """代码内部 try/except + exit(1)，stderr 可能为空，验证 error 仍被设置。"""
+    print("\n[13] returncode != 0, stderr 为空 → 仍然 error")
+
+    ws = str(Path(tempfile.gettempdir()) / "dc_exec_test_exit1")
+    _ensure_workspace(ws)
+
+    # 模拟：代码内部 try/except 了异常，print 了错误信息，然后 exit(1)
+    code = textwrap.dedent("""\
+        import sys
+
+        try:
+            1 / 0
+        except ZeroDivisionError:
+            print("程序出错: division by zero")
+            sys.exit(1)
+    """)
+
+    result = run(_make_state(generated_code=code, workspace_path=ws))
+
+    _check(result["error"] is not None,
+           f"error 非空 (实际: {result['error']!r})")
+    _check("程序出错" in (result["error"] or ""),
+           f"error 包含 stdout 最后内容 (实际: {result['error'][:200]!r})")
+    _check(
+        result["execution_result"] is None or "程序出错" in (result["execution_result"] or ""),
+        "execution_result 包含部分输出"
+    )
+
+
+# ===================================================================
+# 测试 14 — _build_error 辅助函数
+# ===================================================================
+
+def test_build_error_helper() -> None:
+    """_build_error() 单元测试：四种场景全覆盖。"""
+    print("\n[14] _build_error 辅助函数")
+
+    import subprocess as sp
+
+    # 场景1: returncode=0 → None
+    r1 = sp.CompletedProcess(["py"], 0, stdout="ok", stderr="")
+    _check(_build_error(r1) is None, "returncode=0 → error=None")
+
+    # 场景2: returncode != 0, stderr 非空 → 返回 stderr
+    r2 = sp.CompletedProcess(["py"], 1, stdout="", stderr="NameError: x not defined\n")
+    err2 = _build_error(r2)
+    _check(err2 == "NameError: x not defined", f"rc=1 + stderr → stderr (实际: {err2!r})")
+
+    # 场景3: returncode != 0, stderr 空, stdout 非空 → 返回 stdout 最后 500 字符
+    r3 = sp.CompletedProcess(["py"], 1, stdout="程序出错: 除零错误", stderr="")
+    err3 = _build_error(r3)
+    _check(err3 == "程序出错: 除零错误",
+           f"rc=1 + stdout → stdout (实际: {err3!r})")
+
+    # 场景4: returncode != 0, 都为空 → 返回通用信息
+    r4 = sp.CompletedProcess(["py"], 2, stdout="", stderr="")
+    err4 = _build_error(r4)
+    _check("Execution failed" in err4 and "2" in err4,
+           f"rc=2 + 全空 → 通用错误 (实际: {err4!r})")
+
+    # 场景5: long stdout → 截断最后 500 字符
+    r5 = sp.CompletedProcess(["py"], 1, stdout="x" * 1000, stderr="")
+    err5 = _build_error(r5)
+    _check(len(err5) <= 500, f"长 stdout 截断 → {len(err5)} 字符 (≤500)")
+
+    # 场景6: returncode=0, stderr 有内容但不表示错误 → None
+    r6 = sp.CompletedProcess(["py"], 0, stdout="ok\n", stderr="warning: deprecated\n")
+    _check(_build_error(r6) is None, "rc=0 + stderr → error=None (returncode 优先)")
+
+
+# ===================================================================
 # 主入口
 # ===================================================================
 
@@ -449,6 +526,8 @@ def main() -> int:
     test_stderr_captured()
     test_helper_functions()
     test_edge_no_output()
+    test_nonzero_exit_no_stderr()
+    test_build_error_helper()
 
     print("\n" + "=" * 60)
     total = _passed + _failed

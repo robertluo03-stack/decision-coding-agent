@@ -20,7 +20,10 @@
       "Bash(python -m py_compile src/agent/graph.py)",
       "Bash(python -m py_compile tests/test_graph.py)",
       "Bash(python tests/test_graph.py)",
-      "Bash(python -m py_compile main.py)"
+      "Bash(python -m py_compile main.py)",
+      "Bash(python test_planner.py)",
+      "Bash(python tests/test_coder.py)",
+      "Bash(python tests/test_planner.py)"
     ]
   }
 }

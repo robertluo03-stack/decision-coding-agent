@@ -53,8 +53,16 @@
   - stdout 为空时返回 "(no output)"
   - 导出 run = executor_node 别名（兼容 graph.py 入口）
   - 移除 loguru 依赖（改为纯 print，后续 Week2 恢复日志系统）
-  - 58/58 测试通过（tests/test_executor.py，12 个测试场景）
-  - Python 编译检查通过
+  - 58/58→67/67 测试通过（tests/test_executor.py，新增 2 个测试场景）
+
+  **2026-06-23 补充修复**：
+  - 修复1：subprocess.run 使用 sys.executable 替代硬编码 "python"，确保使用虚拟环境解释器
+  - 修复2：新增 _build_error() 函数，基于 returncode 决定 error 字段：
+    - returncode==0 → None（即使 stderr 有内容也不报错）
+    - returncode!=0 + stderr → stderr
+    - returncode!=0 + stdout → stdout 最后 500 字符
+    - 其余 → "Execution failed (returncode=N)"
+  - 效果：代码内部 try/except+exit(1) 也能正确触发 Debugger 而非静默跳入 Reporter
 
 ## 2026-06-22 Week1-Day3 任务6：Reporter 节点
 - 目标：实现 src/agent/nodes/reporter.py，生成 Markdown 格式执行报告
@@ -129,8 +137,15 @@
   - 报告文件路径自动发现（按 mtime 倒序取最新）
   - Python 编译检查通过
 
-  ## 2026-06-22 E2E测试记录
-- 场景1（成功路径）：✅ 通过 / ❌ 失败（原因：...）
-- 场景2（错误+中止）：✅ 通过 / ❌ 失败（原因：...）
-- 场景3（错误+修复）：✅ 通过 / ❌ 失败（原因：...）
-- 场景4（重试限制）：✅ 通过 / ❌ 失败（原因：...）
+  ## 2026-06-23 A轮验收
+- 全部测试通过：~330 项检查
+  - test_planner.py (5 场景)
+  - test_coder.py (45 项)
+  - test_executor.py (67 项)
+  - test_reporter.py (60 项)
+  - test_debugger.py (83 项)
+  - test_graph.py (55 项)
+- Graph 编译正常，5 节点完整注册，两条条件路由正确
+- DEMO_INSTRUCTIONS.md 已创建
+- test_planner.py / test_coder.py import 路径修复（.parent → .parent.parent）
+- E2E场景全部通过（路由层面验证 + 单节点完整测试）

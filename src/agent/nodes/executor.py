@@ -11,6 +11,7 @@ Week 2 计划升级为 Docker 沙箱。
 
 import os
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -98,6 +99,38 @@ def _write_temp_file(code: str, workspace: Path) -> Path:
     return tmp_path
 
 
+def _build_error(result: subprocess.CompletedProcess) -> str | None:
+    """根据 returncode 和输出构建 error 字段。
+
+    规则（优先级从高到低）：
+      1. returncode == 0             → None（无错误）
+      2. returncode != 0, stderr 非空 → stderr（保留尾部换行）
+      3. returncode != 0, stdout 非空 → stdout 最后 500 字符
+      4. 其它                       → "Execution failed (returncode=N)"
+
+    这样即使生成的代码内部用 try/except + exit(1) 吞掉了异常，
+    也能正确触发 route_after_executor → Debugger。
+
+    Args:
+        result: subprocess.CompletedProcess
+
+    Returns:
+        错误描述字符串，或 None
+    """
+    if result.returncode == 0:
+        return None
+
+    stderr = (result.stderr or "").strip()
+    if stderr:
+        return stderr
+
+    stdout = (result.stdout or "").strip()
+    if stdout:
+        return stdout[-500:]
+
+    return f"Execution failed (returncode={result.returncode})"
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
@@ -165,17 +198,20 @@ def executor_node(state: AgentState) -> dict:
     # ---- 5. subprocess 执行 ----
     try:
         result = subprocess.run(
-            ["python", str(tmp_path)],
+            [sys.executable, str(tmp_path)],
             capture_output=True,
             text=True,
             timeout=EXECUTION_TIMEOUT,
             cwd=str(workspace),
         )
 
+        # 根据 returncode 和 stdout/stderr 决定 error 字段
+        error = _build_error(result)
+
         return {
             "file_path": str(tmp_path),
             "execution_result": result.stdout if result.stdout else "(no output)",
-            "error": result.stderr if result.stderr else None,
+            "error": error,
         }
 
     except subprocess.TimeoutExpired:
