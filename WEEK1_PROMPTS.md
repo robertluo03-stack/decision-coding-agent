@@ -223,6 +223,13 @@ Executor节点在 `src/agent/nodes/executor.py` 中。
 8. 危险代码修复：如果LLM返回的修复代码含os.system，拒绝并ABORT
 
 使用 unittest.mock.patch 模拟 builtins.input 和 LLM调用。
+
+## 验收标准
+retry_count >= 2 时，不弹交互，直接ABORT
+4种选择都能正确返回对应的human_feedback
+选项1能正确提取修复代码并更新generated_code
+选项2能正确读取用户指令并生成修复代码
+修复代码含危险代码时，拒绝并ABORT
 ---
 
 ## 任务 6：Reporter 节点

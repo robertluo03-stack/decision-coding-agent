@@ -74,3 +74,24 @@
   - 导出 run = reporter_node 别名（兼容 graph.py 入口）
   - 60/60 测试通过（tests/test_reporter.py，10 个测试场景）
   - Python 编译检查通过
+
+## 2026-06-22 Week1-Day4 任务5：Debugger 节点
+- 目标：实现 src/agent/nodes/debugger.py，错误分析 + Human-in-the-loop 交互
+- 输入：state["error"], state["generated_code"], state["retry_count"]
+- 输出：{"human_feedback": str, "retry_count": int, "generated_code": str|None}
+- 实现要点：
+  - retry_count >= 2 → 直接返回 ABORT，不再进入交互
+  - DeepSeek API 错误分析（_analyze_error_with_llm），失败回退到规则分类 _diagnose_by_rule
+  - DeepSeek API 修复生成（_generate_fix_with_llm），失败回退到 _fix_by_rule
+  - 四条分支严格分离到 _process_choice()，可独立测试不依赖 input()
+  - 选项1：AI_FIX:<code> → generated_code 更新为修复后代码
+  - 选项2：NEED_INSTRUCTION → 二次交互读取指令 → USER_FIX:<指令>
+  - 选项3：SKIP → 保持原代码
+  - 选项4/空/非法：ABORT → 进入 Reporter 生成失败报告
+  - I/O 解耦：_process_choice/_process_instruction 纯逻辑，display_diagnosis/_safe_input 负责终端
+  - 规则分类覆盖 10 种错误类型（SyntaxError/NameError/ImportError/TypeError/Timeout/FileNotFoundError/KeyError/AttributeError/ValueError/默认）
+  - 规则修复三种策略：补括号/注释缺失导入/try-except 包装
+  - 移除 loguru 依赖（改为 print）
+  - 导出 run = debugger_node 别名（兼容 graph.py 入口）
+  - 83/83 测试通过（tests/test_debugger.py，14 个测试场景）
+  - Python 编译检查通过
