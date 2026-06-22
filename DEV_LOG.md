@@ -38,3 +38,20 @@
   - 导出 run = coder_node 别名（兼容 graph.py 入口）
   - 45/45 测试通过（test_coder.py，覆盖正常/边界/执行/安全场景）
   - Python 编译检查通过
+
+## 2026-06-22 Week1-Day3 任务4：Executor 节点
+- 目标：实现 src/agent/nodes/executor.py，安全执行 Python 代码
+- 输入：state["generated_code"], state["workspace_path"]
+- 输出：{"execution_result": str|None, "error": str|None, "file_path": str|None}
+- 实现要点：
+  - 5 层执行流水线：空代码检查 → 危险代码预检 → 语法预检(compile) → 写入临时文件 → subprocess.run
+  - 危险代码检查：os.system / subprocess / eval / exec / __import__ 全部拦截
+  - 语法预检：compile() 提前发现 SyntaxError，避免写入毒文件
+  - 执行超时 30 秒，超时 error 设为 "Execution timeout (30s)"
+  - cwd=workspace_path，代码可用 data/xxx 相对路径
+  - 临时文件写入 workspace/src/_dc_exec_<pid>.py，保留便于调试
+  - stdout 为空时返回 "(no output)"
+  - 导出 run = executor_node 别名（兼容 graph.py 入口）
+  - 移除 loguru 依赖（改为纯 print，后续 Week2 恢复日志系统）
+  - 58/58 测试通过（tests/test_executor.py，12 个测试场景）
+  - Python 编译检查通过

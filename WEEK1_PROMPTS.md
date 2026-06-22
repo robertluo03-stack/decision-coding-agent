@@ -159,7 +159,17 @@ Coder节点在 `src/agent/nodes/coder.py` 中。
 
 危险代码检查：如果generated_code包含 `os.system`、`subprocess`、`eval`、`exec`、`__import__`，
 拒绝执行，error设为 "Security: Dangerous code detected"。
+
+## 验收标准
 ```
+| 检查项           | 验证方法                                                             |
+| ------------- | ---------------------------------------------------------------- |
+| 正常代码执行        | 输入一段`print("hello")`，返回`execution_result="hello\n"`，`error=None` |
+| 超时机制          | 输入`while True: pass`，30秒后`error="Execution timeout (30s)"`           |
+| 危险代码拦截        | 输入`import os; os.system("dir")`，拒绝执行，`error="Security: ..."`     |
+| SyntaxError捕获 | 输入`print("hello"`，捕获语法错误信息                                        |
+| 路径正确          | 执行时`cwd=workspace_path`，代码能读取`data/sales.csv`                     |
+| 临时文件管理        | 执行后`file_path`有值，且文件存在于workspac下                             |
 
 ---
 

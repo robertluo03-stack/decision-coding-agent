@@ -5,7 +5,10 @@
       "Bash(pip list *)",
       "Bash(python -m py_compile src/agent/nodes/coder.py)",
       "Bash(python -m py_compile test_coder.py)",
-      "Bash(python test_coder.py)"
+      "Bash(python test_coder.py)",
+      "Bash(python -m py_compile src/agent/nodes/executor.py)",
+      "Bash(python -m py_compile tests/test_executor.py)",
+      "Bash(python tests/test_executor.py)"
     ]
   }
 }
