@@ -112,3 +112,25 @@
   - initial_state_overrides 参数支持测试注入
   - 55/55 测试通过（tests/test_graph.py，11 个测试场景）
   - Python 编译检查通过
+
+## 2026-06-22 Week1-Day4 任务10：CLI 入口
+- 目标：实现 main.py，交互式 CLI 入口
+- 输入：用户键盘输入 + 环境变量 (WORKSPACE_PATH, DEEPSEEK_API_KEY)
+- 输出：终端打印执行过程 + 最终报告路径
+- 实现要点：
+  - _setup_environment(): 加载 .env → 检查 DEEPSEEK_API_KEY → 解析 WORKSPACE_PATH → 创建子目录
+  - _print_banner(): ASCII art 欢迎语 + 工作区/数据/报告路径
+  - _print_help(): 使用示例（数据分析/库存优化/代码执行）
+  - 主循环: input() 接收自然语言需求 → 构造 AgentState → graph.invoke() → 打印执行摘要
+  - 命令支持: exit/quit/q 退出, help/h/? 帮助, 空输入跳过
+  - KeyboardInterrupt 优雅退出（不 traceback）
+  - try/except 包裹 graph.invoke() 防止单次任务崩溃影响循环
+  - 延迟导入 graph（环境变量就绪后再加载）
+  - 报告文件路径自动发现（按 mtime 倒序取最新）
+  - Python 编译检查通过
+
+  ## 2026-06-22 E2E测试记录
+- 场景1（成功路径）：✅ 通过 / ❌ 失败（原因：...）
+- 场景2（错误+中止）：✅ 通过 / ❌ 失败（原因：...）
+- 场景3（错误+修复）：✅ 通过 / ❌ 失败（原因：...）
+- 场景4（重试限制）：✅ 通过 / ❌ 失败（原因：...）

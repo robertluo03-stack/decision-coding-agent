@@ -19,7 +19,8 @@
       "Bash(python -c \"from langgraph.graph import StateGraph, END; print\\('langgraph OK'\\)\")",
       "Bash(python -m py_compile src/agent/graph.py)",
       "Bash(python -m py_compile tests/test_graph.py)",
-      "Bash(python tests/test_graph.py)"
+      "Bash(python tests/test_graph.py)",
+      "Bash(python -m py_compile main.py)"
     ]
   }
 }

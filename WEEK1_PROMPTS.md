@@ -379,29 +379,31 @@ MCP (Model Context Protocol) 是2025-2026年AI Agent的标准工具协议。
 
 ## 任务 10：CLI 入口
 
-```markdown
 ## 任务
-实现 `main.py`，项目的CLI入口，支持交互式运行Agent。
+实现 main.py，项目CLI入口。
 
-## 输入
-- 用户键盘输入：自然语言任务描述
-- 环境变量：WORKSPACE_PATH, DEEPSEEK_API_KEY
-
-## 输出
-- 终端打印Agent执行过程
-- 最终打印报告路径
+## 核心功能
+1. 加载 .env（python-dotenv）
+2. 检查环境变量：WORKSPACE_PATH、DEEPSEEK_API_KEY
+3. 确保 workspace/data/ 和 workspace/reports/ 存在
+4. 打印欢迎语和工作区路径
+5. 循环接收用户输入（"exit"或"quit"退出）
+6. 对每个输入：
+   - 构造初始state（user_query, workspace_path, retry_count=0, 其余字段默认空值）
+   - 调用 graph.invoke(state)
+   - 打印最终报告路径
+7. 捕获 KeyboardInterrupt，优雅退出
+8. 捕获异常，打印错误但不崩溃
 
 ## 约束
-- 使用 `python-dotenv` 加载 `.env` 文件
-- 确保 `workspace/data/` 和 `workspace/reports/` 目录存在
-- 调用 `graph.invoke()` 启动Agent
-- 打印每个节点的状态变化（简化版）
-- 优雅处理KeyboardInterrupt（Ctrl+C）
+- 导入 from src.agent.graph import graph
+- 导入 from src.agent.state import AgentState
+- 用 try/except 包裹 graph.invoke()
 - 不要引入新依赖
+- 中文注释
 
-## 上下文
-graph对象在 `src/agent/graph.py` 中定义。
-AgentState在 `src/agent/state.py` 中定义。
+## 不需要单独测试脚本
+直接运行 python main.py 交互验证。
 
 示例交互流程：
 ```
