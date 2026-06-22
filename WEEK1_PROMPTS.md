@@ -102,6 +102,21 @@ AgentState定义在 `src/agent/state.py` 中。
 AgentState定义在 `src/agent/state.py` 中。
 Planner节点在 `src/agent/nodes/planner.py` 中。
 
+## 测试要求：
+1. 正常场景：输入"读取CSV统计销量"，验证生成的代码：
+   - 包含import pandas
+   - 包含print()输出
+   - 不包含os.system/subprocess/eval/exec
+   - 使用相对路径data/xxx
+2. 边界场景：
+   - plan为空列表时，代码是否优雅处理（打印错误信息而非崩溃）
+   - user_query为空时，代码是否返回提示
+3. 执行验证：
+   - 把生成的代码写入临时文件，用subprocess执行
+   - 验证是否为SyntaxError-free
+   - 如果是数据分析任务，验证是否能读取测试数据并输出结果
+4. 所有测试数据在脚本中自动生成（创建临时CSV）
+
 示例输入：
 - user_query: "读取data/sales.csv，统计每个sku的总销量"
 - plan: ["读取data/sales.csv文件", "按sku分组统计总销量", "输出统计摘要"]
