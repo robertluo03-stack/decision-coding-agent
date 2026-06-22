@@ -95,3 +95,20 @@
   - 导出 run = debugger_node 别名（兼容 graph.py 入口）
   - 83/83 测试通过（tests/test_debugger.py，14 个测试场景）
   - Python 编译检查通过
+
+## 2026-06-22 Week1-Day4 任务7：Graph 组装
+- 目标：实现 src/agent/graph.py，使用 LangGraph 组装完整 Agent 状态机
+- 输入：无（组装已有节点）
+- 输出：编译后的 graph Runnable（导出 graph 对象）
+- 实现要点：
+  - 5 个节点注册：planner → coder → executor → debugger → reporter
+  - 两个条件路由函数：route_after_executor / route_after_debugger
+  - route_after_executor: error 且非 ABORT → debugger，否则 → reporter
+  - route_after_debugger: ABORT → reporter，否则 → coder（循环）
+  - 状态流转：planner→coder→executor→[debugger→coder→executor]×N →reporter→END
+  - 惰性导入节点：_ensure_imports() 延迟加载避免循环依赖
+  - 无 checkpointer（纯内存模式），thread_id 用 uuid4 短 id
+  - run() 便捷入口：构建初始 state → invoke → 返回最终 state
+  - initial_state_overrides 参数支持测试注入
+  - 55/55 测试通过（tests/test_graph.py，11 个测试场景）
+  - Python 编译检查通过

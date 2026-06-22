@@ -267,42 +267,60 @@ AgentState定义在 `src/agent/state.py` 中。
 
 ## 任务 7：Graph 组装
 
-```markdown
 ## 任务
-实现 `src/agent/graph.py`，使用LangGraph组装完整的Agent状态机。
+实现 src/agent/graph.py，使用LangGraph组装完整的Agent状态机。
 
-## 输入
-无（组装已有节点）
+## 节点导入
+- src.agent.nodes.planner: run as planner_node
+- src.agent.nodes.coder: run as coder_node
+- src.agent.nodes.executor: run as executor_node
+- src.agent.nodes.debugger: run as debugger_node
+- src.agent.nodes.reporter: run as reporter_node
+- src.agent.state: AgentState
 
-## 输出
-- `src/agent/graph.py` 文件，导出一个 `graph` 对象（StateGraph编译后的Runnable）
+## 状态流转
+1. 入口 → planner_node
+2. planner_node → coder_node
+3. coder_node → executor_node
+4. executor_node → 条件分支（Router）
+
+## 条件分支逻辑（Router）
+定义函数 route_after_executor(state):
+- 如果 state["error"] 不为空 且 state["human_feedback"] != "ABORT":
+  → 返回 "debug"
+- 否则:
+  → 返回 "report"
+
+条件边: executor_node → route_after_executor → {"debug": "debugger", "report": "reporter"}
+
+## 调试后分支
+定义函数 route_after_debugger(state):
+- 如果 state["human_feedback"] == "ABORT":
+  → 返回 "report"
+- 否则:
+  → 返回 "code"（回到coder_node重新生成代码）
+
+条件边: debugger_node → route_after_debugger → {"code": "coder", "report": "reporter"}
+
+## 终点
+reporter_node → END
 
 ## 约束
-- 使用 `langgraph.graph.StateGraph`
-- 状态类型使用 `AgentState`（从 `src/agent.state` 导入）
-- 节点：planner → coder → executor
-- 条件分支（Router）：
-  - 如果 `error` 不为空 且 `human_feedback` != "ABORT" → 进入 debugger
-  - 否则 → 进入 reporter
-- 调试后分支：
-  - 如果 `human_feedback` == "ABORT" → 进入 reporter
-  - 否则 → 回到 coder（重新生成代码）
-- 所有边必须正确连接，不能有孤立节点
-- 使用 `graph.compile()` 编译
+- 使用 from langgraph.graph import StateGraph, END
+- 状态类型: AgentState
+- 编译: graph = builder.compile()
+- 导出: graph（编译后的Runnable）
 - 不要引入新依赖
+- 如果节点导入失败，给出清晰的错误提示
 
-## 上下文
-各节点文件路径：
-- `src/agent/nodes/planner.py` — 函数 `run(state)`
-- `src/agent/nodes/coder.py` — 函数 `run(state)`
-- `src/agent/nodes/executor.py` — 函数 `run(state)`
-- `src/agent/nodes/debugger.py` — 函数 `run(state)`
-- `src/agent/nodes/reporter.py` — 函数 `run(state)`
-- `src/agent/state.py` — `AgentState`
+## 测试要求
+同时写 tests/test_graph.py，覆盖：
+1. Graph能成功编译（无孤立节点、无循环引用错误）
+2. 手动构造state，调用graph.invoke()，验证能走完完整流程
+3. 验证条件分支：有error时进入debugger，无error时进入reporter
+4. 验证调试循环：debugger → coder → executor → [debugger|reporter]
 
-每个节点的 `run` 函数签名：`def run(state: dict) -> dict`
-```
-
+注意：test_graph.py 不需要mock LLM，可以构造一个"必然成功"的state（error=None）和一个"必然失败"的state（error="SyntaxError"）来测试路由。
 ---
 
 ## 任务 8：MCP 文件工具
