@@ -17,20 +17,18 @@ from loguru import logger
 from src.agent.state import AgentState
 from src.agent.nodes.prompts.loader import load_prompt
 from src.agent.nodes.prompts.coder_user import build_coder_user_message
+from src.agent.sandbox.security_checker import check_code_safety
+
 # Dangerous pattern check
 # ---------------------------------------------------------------------------
-
-_DANGEROUS_PATTERNS = [
-    "os.system",
-    "subprocess",
-    "eval(",
-    "exec(",
-    "__import__",
-]
+# 已迁移到 src/agent/sandbox/security_checker.py — AST 语法级检查。
+# 保留 _has_dangerous_code() 作为薄兼容层，内部调用 check_code_safety()。
 
 
 def _has_dangerous_code(code: str) -> bool:
     """检查代码是否包含危险模式。
+
+    委托给统一的 AST 安全检查器。
 
     Args:
         code: 生成的 Python 代码
@@ -38,7 +36,8 @@ def _has_dangerous_code(code: str) -> bool:
     Returns:
         如果发现危险模式则返回 True
     """
-    return any(pattern in code for pattern in _DANGEROUS_PATTERNS)
+    is_safe, _ = check_code_safety(code)
+    return not is_safe
 
 
 # ---------------------------------------------------------------------------

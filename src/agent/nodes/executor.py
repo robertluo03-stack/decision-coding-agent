@@ -19,6 +19,7 @@ from pathlib import Path
 from loguru import logger
 
 from src.agent.state import AgentState
+from src.agent.sandbox.security_checker import check_code_safety
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -26,21 +27,14 @@ from src.agent.state import AgentState
 
 EXECUTION_TIMEOUT = 30  # 秒
 
-_DANGEROUS_PATTERNS: list[str] = [
-    "os.system",
-    "subprocess",
-    "eval(",
-    "exec(",
-    "__import__",
-]
-
-# ---------------------------------------------------------------------------
-# 安全检查
-# ---------------------------------------------------------------------------
+# 已迁移到 src/agent/sandbox/security_checker.py — AST 语法级检查。
+# 保留 _has_dangerous_code() 作为薄兼容层，内部调用 check_code_safety()。
 
 
 def _has_dangerous_code(code: str) -> bool:
     """检查代码是否包含危险模式。
+
+    委托给统一的 AST 安全检查器。
 
     Args:
         code: 待执行的 Python 代码
@@ -48,7 +42,8 @@ def _has_dangerous_code(code: str) -> bool:
     Returns:
         如果包含危险代码则返回 True
     """
-    return any(pattern in code for pattern in _DANGEROUS_PATTERNS)
+    is_safe, _ = check_code_safety(code)
+    return not is_safe
 
 
 # ---------------------------------------------------------------------------

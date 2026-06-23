@@ -263,3 +263,27 @@
   - Server 适配：`tool_python_exec` 签名新增 `workspace_path` 参数
 - 验证：`py_compile` 两个文件均通过；26 项测试全部通过：
   - 7 schema / 3 normal execution / 5 danger blocked / 3 open() allowed / 2 timeout+empty / 1 runtime error / 1 workspace_path param / 2 file I/O via open / 1 f-string
+
+## 2026-06-23 Week2 统一安全检查（AST 语法级）
+
+- 目标：创建 `src/agent/sandbox/security_checker.py`，用 AST 替代字符串匹配，统一 coder/executor/python_tools 的安全检查
+- 新增文件：
+  - `src/agent/sandbox/__init__.py` — 包入口，导出 `check_code_safety`
+  - `src/agent/sandbox/security_checker.py` — AST 遍历器 + `check_code_safety(code) -> tuple[bool, str|None]`
+- 修改文件：
+  - `src/agent/nodes/coder.py` — `_has_dangerous_code()` 替换为 `check_code_safety()` 薄包装，移除 `_DANGEROUS_PATTERNS`
+  - `src/agent/nodes/executor.py` — 同上，移除 `_DANGEROUS_PATTERNS`
+  - `src/mcp/tools/python_tools.py` — `_check_code_safety()` 委托给 `check_code_safety()`，移除 `BLOCKED_PATTERNS`
+- 实现要点：
+  - **AST 语法级分析**：`_DangerousPatternVisitor(ast.NodeVisitor)` 遍历 AST 节点检测危险调用
+  - **精确检测**：`os.system()` / `subprocess.*` / `eval()` / `exec()` / `__import__()` / `compile()`
+  - **属性链识别**：`subprocess.run()` / `subprocess.Popen()` / `subprocess.call()` 等所有 subprocess 属性访问
+  - **变形写法识别**：`__import__('os').system('whoami')` 通过递归 `_get_func_str` 处理 `ast.Call` 节点
+  - **合法 open() 放行**：不再拦截 `open('data.csv')` 等合法文件操作（旧版 `BLOCKED_KEYWORDS` 误杀问题修复）
+  - **API 设计**：返回 `tuple[bool, str|None]` — `(True, None)` 安全，`(False, "原因")` 危险
+- 验证：
+  - `py_compile` 4 个文件全部通过
+  - `test_executor.py` **67/67 通过**（零回归）
+  - `test_coder.py` **45/45 通过**（零回归）
+  - AST 专项测试：5 种危险模式 + 3 种 subprocess 变体 + `__import__` 变形写法 全部拦截
+  - 合法代码：`open('data.csv')` / csv DictReader / matplotlib / f-string / list comprehension 全部放行

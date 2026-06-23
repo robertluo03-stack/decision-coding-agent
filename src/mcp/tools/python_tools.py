@@ -13,22 +13,14 @@ from typing import Optional
 
 from loguru import logger
 
+from src.agent.sandbox.security_checker import check_code_safety as _check_safety_ast
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
 
 # 执行超时（秒）
 DEFAULT_TIMEOUT = 30
-
-# 禁止的危险模式（精确匹配，不再拦截合法的 open() 调用）
-# 注意：这些是 Coder 生成代码的约束，Tool 自身通过 subprocess 实现执行
-BLOCKED_PATTERNS: list[str] = [
-    "os.system",
-    "subprocess",
-    "eval(",
-    "exec(",
-    "__import__",
-]
 
 # 语法预检使用 compile() 的模式名
 COMPILE_MODE = "exec"
@@ -49,19 +41,16 @@ def _get_workspace() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# 安全检查
+# 安全检查（委托给统一的 AST 检查器）
 # ---------------------------------------------------------------------------
 
 
 def _check_code_safety(code: str) -> Optional[str]:
-    """精确的代码安全检查（Week 2 版本）。
+    """检查代码安全（委托给统一的 AST 检查器）。
 
-    使用精确模式匹配，只拦截明确的危险调用：
-      - os.system("...")     → 拦截
-      - open("data.csv")     → 放行（不再误杀）
-      - eval("1+1")          → 拦截
-      - exec("print('x')")   → 拦截
-      - __import__("os")     → 拦截
+    使用 src.agent.sandbox.security_checker 进行语法级 AST 分析，
+    精确识别 os.system / subprocess / eval / exec / __import__ 等危险调用，
+    同时允许 open('data.csv') 等合法文件操作。
 
     Args:
         code: Python 源代码
@@ -69,9 +58,9 @@ def _check_code_safety(code: str) -> Optional[str]:
     Returns:
         如果安全则返回 None，否则返回拦截原因描述
     """
-    for pattern in BLOCKED_PATTERNS:
-        if pattern in code:
-            return f"Blocked pattern detected: {pattern!r}"
+    is_safe, reason = _check_safety_ast(code)
+    if not is_safe:
+        return f"SECURITY BLOCK: {reason}"
     return None
 
 
