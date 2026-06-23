@@ -38,7 +38,13 @@
       "Bash(timeout 15 python main.py)",
       "Bash(python -c \"import os; from dotenv import load_dotenv; load_dotenv\\(\\); print\\('API Key set:', bool\\(os.environ.get\\('DEEPSEEK_API_KEY'\\)\\)\\)\")",
       "Bash(timeout 60 python main.py)",
-      "Bash(rm -f logs/debug.log logs/error.log)"
+      "Bash(rm -f logs/debug.log logs/error.log)",
+      "Bash(python -c \"import mcp; print\\(mcp.__version__\\)\")",
+      "Bash(python -c \"import mcp; print\\(dir\\(mcp\\)\\)\")",
+      "Bash(python -c \"import mcp.server; print\\([x for x in dir\\(mcp.server\\) if not x.startswith\\('_'\\)]\\)\")",
+      "Bash(python -c \"import mcp.types; print\\([x for x in dir\\(mcp.types\\) if not x.startswith\\('_'\\)]\\)\")",
+      "Bash(python -c \"import mcp.server.stdio; print\\([x for x in dir\\(mcp.server.stdio\\) if not x.startswith\\('_'\\)]\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from src.mcp.server import create_mcp_server; print\\('Import path works'\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\18500\\Desktop\\Study\\agent\\decision-coder\\src\\agent\\prompts"

@@ -209,3 +209,17 @@
   - 修改：`.gitignore`、`src/agent/graph.py`、`src/agent/nodes/planner.py`、`coder.py`、`executor.py`、`debugger.py`、`reporter.py`
 - 技术栈：loguru（纯 Python，非重量级，符合项目约束）
 - 后续使用：各节点可导入 `get_logger("节点名")` 替代直接 `from loguru import logger`
+
+## 2026-06-23 Week2 MCP Server 重写
+
+- 目标：完全重写 `src/mcp/server.py`，用 mcp SDK (FastMCP) 替换 `_StubMCPServer` 占位代码
+- 修改文件：`src/mcp/server.py`（完全重写）、`src/mcp/tools/__init__.py`（修复语法错误）
+- 实现要点：
+  - 替换 `_StubMCPServer` 为 `FastMCP(name="decision-coder")` 标准 MCP Server
+  - `@server.tool()` 装饰器注册 4 个 Tool：`file_read` / `file_write` / `file_read_csv` / `python_exec`
+  - FastMCP 自动从函数签名推断 `inputSchema`（JSON Schema），从 return type 推断 `outputSchema`
+  - `list_tools()` 返回 `list[MCPTool]`（含 name / description / inputSchema / outputSchema），符合 MCP 协议
+  - `call_tool(name, arguments)` 调度到实际工具函数（自动验证参数 + 包装返回值为 CallToolResult）
+  - `if __name__ == "__main__"` 入口通过 `server.run(transport="stdio")` 启动 stdio transport
+  - 已确认 `pyproject.toml` 中 `mcp>=1.0.0` 依赖存在（Week1 已声明）
+  - 验证：`py_compile` 通过；`list_tools()` 返回 4 个 Tool，每个含 name / description / inputSchema；`call_tool()` 6 项测试全部通过（write → read → python_exec → 危险代码拦截 → 未知 tool 报错 → CSV 读写）
