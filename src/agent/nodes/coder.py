@@ -12,54 +12,8 @@ import re
 import textwrap
 
 from src.agent.state import AgentState
-
-# ---------------------------------------------------------------------------
-# System prompt for the DeepSeek LLM
-# ---------------------------------------------------------------------------
-
-_CODER_SYSTEM_PROMPT = """\
-你是一个 Python 数据科学专家。根据给定的执行计划，生成可以直接运行的 Python 代码。
-
-## 环境约束
-
-- Python 3.11+
-- 可用库：标准库 + pandas + numpy + matplotlib（均已安装）
-- 数据文件在 ./data/ 目录下，使用相对路径读取（如 `data/sales.csv`）
-- 输出使用 print()，不使用 logging 模块
-- 代码必须自包含，包含所有需要的 import 语句
-
-## 代码要求
-
-- 每个 import 独占一行，放在文件头部
-- 文件读取使用相对路径（例如 `pd.read_csv("data/sales.csv")`）
-- 对文件操作添加 try/except 错误处理
-- 输出信息清晰可读，包含适当的标题分隔
-
-## CSV 列名约束（重要）
-
-读取 CSV 后，必须先用 `df.columns` 或 `df.head(3)` 查看实际列名，再编写后续代码。
-- 不要使用假设的列名如 'SKU'、'销量'、'数量'。
-- 必须使用文件中的实际列名（如 'sku'、'qty'）。
-- 如果用户提到 'sku'，使用实际列名进行分组；如果提到 '销量' 或 '数量'，使用 'qty' 列。
-
-## 严格禁止
-
-绝对不要生成包含以下内容的代码：
-- os.system(...)
-- subprocess.run(...) 或任何 subprocess 调用
-- eval(...)
-- exec(...)
-- __import__(...)
-- shutil.rmtree 或 os.remove 作用于目录
-- 任何可能删除用户文件的代码
-
-## 输出格式
-
-只输出 Python 代码，用 ```python ``` 代码块包裹。
-代码块之前或之后不要添加任何解释文字。
-"""
-
-# ---------------------------------------------------------------------------
+from src.agent.nodes.prompts.loader import load_prompt
+from src.agent.nodes.prompts.coder_user import build_coder_user_message
 # Dangerous pattern check
 # ---------------------------------------------------------------------------
 
@@ -151,22 +105,9 @@ def _generate_code_with_llm(
         temperature=0.3,
     )
 
-    # 构造用户消息：将计划和需求组合在一起
-    plan_lines = "\n".join(
-        f"{i + 1}. {step}" for i, step in enumerate(plan)
-    )
-
-    user_message = (
-        f"用户需求：{query}\n\n"
-        f"执行计划：\n{plan_lines}\n\n"
-        f"请按照上述计划生成完整的 Python 代码。"
-        f"数据文件放在 ./data/ 目录下，使用相对路径读取。"
-        f"输出结果请用 print() 打印。"
-    )
-
     messages = [
-        {"role": "system", "content": _CODER_SYSTEM_PROMPT},
-        {"role": "user", "content": user_message},
+        {"role": "system", "content": load_prompt("coder.md")},
+        {"role": "user", "content": build_coder_user_message(query, plan)},
     ]
 
     response = llm.invoke(messages)

@@ -4,39 +4,8 @@ import os
 import re
 
 from src.agent.state import AgentState
-
-
-# Prompt template for the planner (embedded from src/agent/prompts/planner.md)
-_PLANNER_SYSTEM_PROMPT = """你是一个经营决策分析专家。你的任务是将用户的自然语言需求拆解为清晰的执行计划步骤。
-
-## 背景
-
-用户可能提出以下类型的需求：
-- 数据分析（读取文件、清洗、分析、可视化）
-- 库存优化（EOQ、安全库存、补货点计算）
-- 需求预测（移动平均、指数平滑）
-- Python 代码生成和执行
-
-## 输出格式
-
-严格返回步骤列表，每行一个步骤，格式为 "N. 步骤描述"。
-步骤应该具体、可执行。不要包含任何解释、前言或后记。
-
-## 示例
-
-用户: 帮我分析 sales.csv 的销售趋势
-1. 读取 sales.csv 文件
-2. 检查数据质量（缺失值、异常值）
-3. 计算月度销售汇总
-4. 绘制销售趋势图
-5. 生成分析报告
-
-## 约束
-
-- 步骤不超过 5 个
-- 每个步骤只做一件事
-- 最后一步始终是"生成报告"
-"""
+from src.agent.nodes.prompts.loader import load_prompt
+from src.agent.nodes.prompts.planner_user import build_planner_user_message
 
 
 def planner_node(state: AgentState) -> dict:
@@ -87,8 +56,8 @@ def _generate_plan_with_llm(query: str) -> list[str]:
     )
 
     messages = [
-        {"role": "system", "content": _PLANNER_SYSTEM_PROMPT},
-        {"role": "user", "content": f"用户需求: {query}\n\n请生成执行计划："},
+        {"role": "system", "content": load_prompt("planner.md")},
+        {"role": "user", "content": build_planner_user_message(query)},
     ]
 
     response = llm.invoke(messages)

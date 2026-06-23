@@ -44,6 +44,12 @@
 │  └─────────┘ └──────────┘ └──────────┘ └─────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
+┌─────────────────────────────────────────────┐
+│  领域模板层（管科核心壁垒）                   │
+│  需求预测 │ 安全库存 │ EOQ │ 补货点 │ ABC    │
+│  使用 OR-Tools / PuLP / Scipy               │
+└─────────────────────────────────────────────┘
+                              │
 ┌─────────────────────────────────────────────────────────────┐
 │  LLM 后端 (可切换)                                           │
 │  DeepSeek-V3 (开发) / Claude 3.5 Sonnet (演示)              │
@@ -162,47 +168,61 @@ class AgentState(TypedDict):
 
 ```
 decision-coder/
-├── pyproject.toml          # 依赖管理
-├── .env                    # API密钥（不提交git）
-├── .env.example            # 环境变量模板
+├── pyproject.toml              # 依赖管理
+├── .env                        # API密钥（不提交git）
+├── .env.example                # 环境变量模板
 ├── .gitignore
-├── README.md               # 对外项目介绍
-├── AI_CONTEXT.md           # 给AI Coding Agent看的上下文
-├── DEV_DESIGN.md           # 本文件（面向自己）
-├── DEV_LOG.md              # 每日开发日志
+├── main.py                     # CLI 入口（交互式主程序）
+├── README.md                   # 对外项目介绍
+├── CLAUDE.md                   # Claude Code 项目指南
+├── DEV_DESIGN.md               # 本文件（面向自己）
+├── DEV_LOG.md                  # 每日开发日志
 ├── src/
 │   ├── agent/
-│   │   ├── graph.py
-│   │   ├── state.py
+│   │   ├── graph.py            # LangGraph 状态机组装 + run() 便捷入口
+│   │   ├── state.py            # AgentState TypedDict 定义
 │   │   ├── nodes/
-│   │   │   ├── planner.py
-│   │   │   ├── coder.py
-│   │   │   ├── executor.py
-│   │   │   ├── debugger.py
-│   │   │   └── reporter.py
-│   │   └── prompts/        # 结构化Prompt模板
-│   │       ├── planner.md
-│   │       ├── coder.md
-│   │       └── debugger.md
+│   │   │   ├── __init__.py
+│   │   │   ├── planner.py      # Planner：需求拆解为步骤列表
+│   │   │   ├── coder.py        # Coder：生成可执行 Python 代码
+│   │   │   ├── executor.py     # Executor：subprocess 沙箱执行
+│   │   │   ├── debugger.py     # Debugger：AI 分析 + Human-in-the-loop
+│   │   │   ├── reporter.py     # Reporter：生成 Markdown 报告
+│   │   │   └── prompts/        # 提示词管理（已外置）
+│   │   │       ├── __init__.py
+│   │   │       ├── loader.py             # load_prompt() 从 disk 读取 .md
+│   │   │       ├── planner.md            # Planner 系统约束（静态 .md）
+│   │   │       ├── planner_user.py       # Planner 用户消息 builder
+│   │   │       ├── coder.md              # Coder 系统约束（静态 .md）
+│   │   │       ├── coder_user.py         # Coder 用户消息 builder
+│   │   │       ├── debugger_analysis.md  # Debugger 错误分析提示
+│   │   │       ├── debugger_fix.md       # Debugger 代码修复提示
+│   │   │       └── debugger_user.py      # Debugger 用户消息 builders
 │   ├── mcp/
-│   │   ├── server.py
+│   │   ├── server.py           # MCP 服务端入口
 │   │   └── tools/
-│   │       ├── file_tools.py
-│   │       └── python_tools.py
+│   │       ├── file_tools.py   # 文件读写工具
+│   │       └── python_tools.py # Python 沙箱执行工具
 │   ├── domain/
-│   │   ├── templates/      # 预定义优化模板
-│   │   │   ├── inventory_eoq.py
-│   │   │   ├── safety_stock.py
-│   │   │   └── demand_forecast.py
-│   │   └── schema.py
-│   └── workspace/          # 工作区（不提交git）
-│       ├── data/
-│       ├── src/
-│       ├── reports/
-│       └── tests/
-├── tests/                  # 项目级测试
-├── examples/               # Demo示例
-└── docs/                   # 文档
+│   │   ├── schema.py           # 领域数据模型
+│   │   └── templates/          # 预定义优化模板
+│   │       ├── inventory_eoq.py     # EOQ 经济订货批量
+│   │       ├── safety_stock.py      # 安全库存计算
+│   │       └── demand_forecast.py   # 需求预测
+│   └── workspace/              # 工作区（不提交git）
+│       ├── data/               # 用户数据文件
+│       ├── src/                # Agent 生成的代码文件
+│       ├── reports/            # 生成的 Markdown 报告
+│       └── tests/              # 生成的测试文件
+├── tests/                      # 项目级测试
+│   ├── test_planner.py
+│   ├── test_coder.py
+│   ├── test_executor.py
+│   ├── test_debugger.py
+│   ├── test_reporter.py
+│   └── test_graph.py
+├── examples/                   # Demo 示例
+└── docs/                       # 文档
 ```
 
 ---

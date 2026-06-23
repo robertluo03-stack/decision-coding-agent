@@ -121,13 +121,7 @@ workspace/
 
 ## 开发约定
 
-### 每次让AI写代码时的标准流程
 
-1. 读取本文件（AI_CONTEXT.md）
-2. 读取`DEV_DESIGN.md`中相关阶段的设计
-3. 只修改指定文件，不修改其他文件
-4. 实现后运行`python -m py_compile <file>`检查语法
-5. 更新`DEV_LOG.md`记录变更
 
 ### Prompt模板（给AI的指令格式）
 

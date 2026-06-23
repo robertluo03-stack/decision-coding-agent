@@ -19,43 +19,11 @@ import textwrap
 from typing import Any
 
 from src.agent.state import AgentState
-
-# ---------------------------------------------------------------------------
-# System prompt for DeepSeek error analysis
-# ---------------------------------------------------------------------------
-
-_DEBUGGER_ANALYSIS_PROMPT = """\
-你是一个 Python 调试专家。根据错误信息和出错的代码，用 1-2 句话分析错误原因。
-
-## 输出格式
-
-直接输出分析文字，不要加标题或前缀。格式示例:
-"代码在第3行出现了 NameError: 变量 df 在使用前未定义。建议在读取 CSV 文件后再调用 groupby。"
-
-## 约束
-
-- 分析控制在 1-2 句话内
-- 不要输出完整修复方案（修复由下一个步骤生成）
-"""
-
-_DEBUGGER_FIX_PROMPT = """\
-你是一个 Python 代码修复专家。根据错误信息和用户需求，修复给定的代码。
-
-## 环境约束
-
-- Python 3.11+
-- 可用库：标准库 + pandas + numpy + matplotlib
-- 数据文件在 ./data/ 目录下
-- 输出结果用 print()
-
-## 修复规则
-
-1. 只输出修复后的完整 Python 代码
-2. 用 ```python ``` 代码块包裹
-3. 不要添加任何解释文字
-4. 保持原代码的整体结构和逻辑
-5. 只修复导致错误的部分
-"""
+from src.agent.nodes.prompts.loader import load_prompt
+from src.agent.nodes.prompts.debugger_user import (
+    build_analysis_user_message,
+    build_fix_user_message,
+)
 
 # ---------------------------------------------------------------------------
 # 代码块提取
@@ -123,15 +91,9 @@ def _analyze_error_with_llm(error: str, code: str) -> str:
     """
     llm = _get_deepseek_llm()
 
-    user_msg = (
-        f"错误信息:\n```\n{error}\n```\n\n"
-        f"原始代码:\n```python\n{code}\n```\n\n"
-        f"请分析错误原因（1-2 句话）。"
-    )
-
     messages = [
-        {"role": "system", "content": _DEBUGGER_ANALYSIS_PROMPT},
-        {"role": "user", "content": user_msg},
+        {"role": "system", "content": load_prompt("debugger_analysis.md")},
+        {"role": "user", "content": build_analysis_user_message(error, code)},
     ]
 
     response = llm.invoke(messages)
@@ -155,21 +117,9 @@ def _generate_fix_with_llm(
     """
     llm = _get_deepseek_llm()
 
-    if user_instruction:
-        instruction_text = f"用户的修复指令: {user_instruction}"
-    else:
-        instruction_text = "根据错误信息自动分析最优修复方案。"
-
-    user_msg = (
-        f"错误信息:\n```\n{error}\n```\n\n"
-        f"原始代码:\n```python\n{code}\n```\n\n"
-        f"{instruction_text}\n\n"
-        f"请输出修复后的完整 Python 代码。"
-    )
-
     messages = [
-        {"role": "system", "content": _DEBUGGER_FIX_PROMPT},
-        {"role": "user", "content": user_msg},
+        {"role": "system", "content": load_prompt("debugger_fix.md")},
+        {"role": "user", "content": build_fix_user_message(error, code, user_instruction)},
     ]
 
     response = llm.invoke(messages)

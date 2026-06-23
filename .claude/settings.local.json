@@ -23,7 +23,17 @@
       "Bash(python -m py_compile main.py)",
       "Bash(python test_planner.py)",
       "Bash(python tests/test_coder.py)",
-      "Bash(python tests/test_planner.py)"
+      "Bash(python tests/test_planner.py)",
+      "Bash(rm -v c:/Users/18500/Desktop/Study/agent/decision-coder/src/agent/prompts/*.md && rmdir c:/Users/18500/Desktop/Study/agent/decision-coder/src/agent/prompts/)",
+      "Bash(python -m py_compile src/agent/nodes/prompts/loader.py)",
+      "Bash(python -m py_compile src/agent/nodes/prompts/planner_user.py)",
+      "Bash(python -m py_compile src/agent/nodes/prompts/coder_user.py)",
+      "Bash(python -m py_compile src/agent/nodes/prompts/debugger_user.py)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(pip install *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\18500\\Desktop\\Study\\agent\\decision-coder\\src\\agent\\prompts"
     ]
   }
 }
