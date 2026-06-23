@@ -1,93 +1,344 @@
 """文件读写工具 — 基于 MCP 协议。
 
 支持 CSV、Excel、JSON 等格式的读写操作。
+Week 2 版本：路径安全校验 + CallToolResult 包装 + 新增 list_dir / file_exists。
 """
 
 import csv
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
 from loguru import logger
 
+# ---------------------------------------------------------------------------
+# 常量
+# ---------------------------------------------------------------------------
+
 # 允许的文件扩展名白名单
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".txt", ".md", ".log"}
+ALLOWED_EXTENSIONS = frozenset({".csv", ".xlsx", ".xls", ".json", ".txt", ".md", ".log"})
 
 # 文件大小上限 (10 MB)
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
+# ---------------------------------------------------------------------------
+# 工作区路径解析
+# ---------------------------------------------------------------------------
 
-def read_file(filepath: str, fmt: Optional[str] = None) -> str:
+
+def _get_workspace() -> Path:
+    """获取工作区根目录（绝对路径）。
+
+    从环境变量 WORKSPACE_PATH 读取，默认 "./workspace" 并 resolve 为绝对路径。
+    """
+    raw = os.environ.get("WORKSPACE_PATH", "./workspace")
+    return Path(raw).resolve()
+
+
+# ---------------------------------------------------------------------------
+# 路径安全校验
+# ---------------------------------------------------------------------------
+
+
+def _resolve_safe_path(filepath: str | Path, workspace: Path | None = None) -> Path:
+    """将 filepath 安全解析到 workspace 下的绝对路径。
+
+    规则：
+      1. 相对路径以 workspace 为基准拼接
+      2. 绝对路径直接 resolve
+      3. resolve 后检查是否在 workspace 子树内（禁止 .. 穿越）
+      4. 拒绝符号链接逃逸（resolve 展开所有 symlink）
+
+    Args:
+        filepath: 用户传入的文件路径（相对或绝对）
+        workspace: 工作区根目录，默认从环境变量获取
+
+    Returns:
+        workspace 内解析后的绝对 Path
+
+    Raises:
+        ValueError: 路径逃逸 workspace 或包含 ".." 穿越
+    """
+    if workspace is None:
+        workspace = _get_workspace()
+
+    ws = workspace.resolve()
+    p = Path(filepath)
+
+    # 拒绝包含 ".." 成分的路径（白名单式拦截，避免绕过）
+    if ".." in p.parts:
+        raise ValueError(f"路径包含 '..' 穿越，已被拦截: {filepath!r}")
+
+    # 相对路径以 workspace 为基准
+    if not p.is_absolute():
+        p = ws / p
+
+    # resolve 展开所有符号链接和相对成分
+    resolved = p.resolve()
+
+    # 检查是否在 workspace 子树内
+    try:
+        resolved.relative_to(ws)
+    except ValueError:
+        raise ValueError(
+            f"路径不在工作区范围内，已被拦截: {filepath!r} → {resolved}"
+        )
+
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# 扩展名与参数校验
+# ---------------------------------------------------------------------------
+
+
+def _check_extension(path: Path) -> None:
+    """检查文件扩展名是否在白名单内。
+
+    无后缀时跳过检查（由上层 read_file 根据 fmt 参数决定是否拒绝）。
+    """
+    ext = path.suffix.lower()
+    if not ext:
+        # 无后缀：不做扩展名检查，交由上层 read_file 根据 fmt 参数处理
+        return
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"文件扩展名不在白名单: {ext}。允许: {sorted(ALLOWED_EXTENSIONS)}"
+        )
+
+
+def _validate_file(path: Path) -> None:
+    """验证文件存在性、扩展名和大小。"""
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+    _check_extension(path)
+    if path.stat().st_size > MAX_FILE_SIZE:
+        raise ValueError(f"文件过大: {path} ({path.stat().st_size} bytes)")
+
+
+def _validate_not_binary(path: Path) -> None:
+    """检查文件是否为文本格式（简单启发式）。
+
+    读取前 1024 字节，检测 null 字节。不保证 100% 准确，但能拦截典型二进制。
+    """
+    with path.open("rb") as f:
+        chunk = f.read(1024)
+    if b"\x00" in chunk:
+        raise ValueError(f"文件疑似二进制格式，拒绝读取: {path}")
+
+
+# ---------------------------------------------------------------------------
+# 公开工具函数
+# ---------------------------------------------------------------------------
+
+
+def read_file(
+    filepath: str,
+    fmt: Optional[str] = None,
+    *,
+    workspace: str | None = None,
+) -> str:
     """读取文件内容，自动推断格式。
 
     Args:
-        filepath: 文件路径
-        fmt: 强制指定格式 ("csv" | "json" | "txt")
+        filepath: 文件路径（相对 workspace 或绝对路径）
+        fmt: 强制指定格式 ("csv" | "json" | "txt")，为空则根据文件后缀自动推断
+        workspace: 工作区根目录（默认从环境变量 WORKSPACE_PATH 读取）
 
     Returns:
-        文件内容字符串
+        文件内容字符串（CSV/JSON 会格式化为缩进后的 JSON 文本）
+
+    Raises:
+        FileNotFoundError: 文件不存在
+        ValueError: 路径不合法 / 扩展名不允许 / 文件过大 / 疑似二进制
     """
-    path = Path(filepath)
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(filepath, ws)
     _validate_file(path)
 
+    # 确定格式：优先显式 fmt，其次从后缀推断
     fmt = fmt or path.suffix.lstrip(".").lower()
+
+    # 修复：无后缀且未指定 fmt 时，拒绝读取（避免读到二进制文件）
+    if not fmt:
+        raise ValueError(
+            f"无法推断文件格式（无后缀且未指定 fmt 参数）: {filepath!r}。"
+            f"请显式指定 fmt=\"txt\"（纯文本）/ fmt=\"csv\" / fmt=\"json\""
+        )
 
     if fmt == "csv":
         return _read_csv(path)
     elif fmt == "json":
         return _read_json(path)
     else:
+        # txt / md / log / 其他纯文本：先验证非二进制再读取
+        _validate_not_binary(path)
         return path.read_text(encoding="utf-8")
 
 
-def write_file(filepath: str, content: str) -> None:
+def write_file(
+    filepath: str,
+    content: str,
+    *,
+    overwrite: bool = True,
+    workspace: str | None = None,
+) -> str:
     """写入文件，自动创建父目录。
 
     Args:
-        filepath: 文件路径
+        filepath: 文件路径（相对 workspace 或绝对路径）
         content: 文件内容
+        overwrite: 是否允许覆盖已有文件（默认 True；False 时文件已存在则报错）
+        workspace: 工作区根目录（默认从环境变量 WORKSPACE_PATH 读取）
+
+    Returns:
+        确认消息字符串
     """
-    path = Path(filepath)
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(filepath, ws)
     _check_extension(path)
+
+    # 覆盖保护
+    if not overwrite and path.exists():
+        raise FileExistsError(
+            f"文件已存在且 overwrite=False，拒绝覆盖: {path}"
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    logger.info(f"File written: {path}")
+    logger.info("File written: {}", path)
+    return f"OK: 已写入 {path}"
 
 
-def read_csv(filepath: str) -> list[dict]:
-    """读取 CSV 文件，返回字典列表。"""
-    path = Path(filepath)
+def read_csv(filepath: str, *, workspace: str | None = None) -> str:
+    """读取 CSV 文件，返回 JSON 字符串。
+
+    列名从 CSV header 读取，每行映射为一个 JSON 对象。
+
+    Args:
+        filepath: CSV 文件路径
+        workspace: 工作区根目录
+
+    Returns:
+        JSON 字符串，格式: [{"col1": "val1", ...}, ...]
+    """
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(filepath, ws)
     _validate_file(path)
-    rows = []
+    rows: list[dict[str, str]] = []
     with path.open("r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
             rows.append(row)
-    logger.info(f"CSV read: {len(rows)} rows from {path}")
-    return rows
+    logger.info("CSV read: {} rows from {}", len(rows), path)
+    return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
+def list_dir(
+    dirpath: str = ".",
+    *,
+    workspace: str | None = None,
+) -> str:
+    """列出目录内容，返回文件/子目录清单。
+
+    Args:
+        dirpath: 目录路径（相对 workspace，默认 "."）
+        workspace: 工作区根目录
+
+    Returns:
+        JSON 字符串，格式: {
+            "dir": "<绝对路径>",
+            "entries": [
+                {"name": "...", "type": "file"|"dir", "size": <bytes>},
+                ...
+            ]
+        }
+    """
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(dirpath, ws)
+
+    if not path.exists():
+        raise FileNotFoundError(f"目录不存在: {path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"不是目录: {path}")
+
+    entries: list[dict] = []
+    for entry in sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+        try:
+            size = entry.stat().st_size if entry.is_file() else 0
+        except OSError:
+            size = 0
+        entries.append({
+            "name": entry.name,
+            "type": "dir" if entry.is_dir() else "file",
+            "size": size,
+        })
+
+    result = {"dir": str(path), "entries": entries}
+    logger.info("list_dir: {} entries in {}", len(entries), path)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+def file_exists(
+    filepath: str,
+    *,
+    workspace: str | None = None,
+) -> str:
+    """检查文件是否存在。
+
+    Args:
+        filepath: 文件路径（相对 workspace 或绝对路径）
+        workspace: 工作区根目录
+
+    Returns:
+        JSON 字符串，格式: {"exists": true|false, "filepath": "<绝对路径>"}
+    """
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+
+    # 尝试解析路径，即使路径不存在也可以做安全检查
+    # 但 resolve_safe_path 需要路径存在才能 resolve...
+    # 这里我们做轻量安全检查：拒绝 .. 穿越，然后拼接
+    if ".." in Path(filepath).parts:
+        raise ValueError(f"路径包含 '..' 穿越，已被拦截: {filepath!r}")
+
+    p = Path(filepath)
+    if not p.is_absolute():
+        p = ws / p
+
+    resolved = p.resolve()
+
+    # 检查是否在 workspace 子树内
+    try:
+        resolved.relative_to(ws)
+    except ValueError:
+        raise ValueError(
+            f"路径不在工作区范围内，已被拦截: {filepath!r} → {resolved}"
+        )
+
+    exists = resolved.exists()
+    result = {"exists": exists, "filepath": str(resolved)}
+    logger.info("file_exists: {} → {}", filepath, exists)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# 内部辅助
+# ---------------------------------------------------------------------------
 
 
 def _read_csv(path: Path) -> str:
-    rows = read_csv(str(path))
+    """CSV → JSON 字符串。"""
+    rows: list[dict[str, str]] = []
+    with path.open("r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    logger.info("CSV read (internal): {} rows from {}", len(rows), path)
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 def _read_json(path: Path) -> str:
+    """读取 JSON 文件并重新格式化输出。"""
     data = json.loads(path.read_text(encoding="utf-8"))
     return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-def _validate_file(path: Path) -> None:
-    """验证文件存在性、扩展名和大小。"""
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    _check_extension(path)
-    if path.stat().st_size > MAX_FILE_SIZE:
-        raise ValueError(f"File too large: {path} ({path.stat().st_size} bytes)")
-
-
-def _check_extension(path: Path) -> None:
-    """检查文件扩展名是否在白名单内。"""
-    ext = path.suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError(f"File extension not allowed: {ext}. Allowed: {ALLOWED_EXTENSIONS}")

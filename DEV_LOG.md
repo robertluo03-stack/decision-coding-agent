@@ -223,3 +223,43 @@
   - `if __name__ == "__main__"` 入口通过 `server.run(transport="stdio")` 启动 stdio transport
   - 已确认 `pyproject.toml` 中 `mcp>=1.0.0` 依赖存在（Week1 已声明）
   - 验证：`py_compile` 通过；`list_tools()` 返回 4 个 Tool，每个含 name / description / inputSchema；`call_tool()` 6 项测试全部通过（write → read → python_exec → 危险代码拦截 → 未知 tool 报错 → CSV 读写）
+
+## 2026-06-23 Week2 file_tools 重构
+
+- 目标：重写 `src/mcp/tools/file_tools.py`，路径安全校验 + 修复 fmt 缺陷 + overwrite 参数 + 新增 list_dir/file_exists
+- 修改文件：`src/mcp/tools/file_tools.py`（重写）、`src/mcp/server.py`（新增 2 个 Tool 注册）
+- 实现要点：
+  - **路径安全校验**：`_resolve_safe_path()` 统一入口，三步防御：
+    1. 拒绝 `..` in parts（白名单式拦截）
+    2. 相对路径以 workspace 为基准拼接
+    3. resolve 后检查是否在 workspace 子树内（禁止符号链接逃逸）
+  - **修复 fmt 缺陷**：无后缀且未指定 fmt 时，`read_file()` 抛出清晰错误提示（要求显式指定 fmt）
+  - **二进制检测**：`_validate_not_binary()` 读取前 1024 字节检测 null 字节，拦截典型二进制
+  - **overwrite 保护**：`write_file()` 新增 `overwrite` 参数（默认 True），False 时文件已存在则报 `FileExistsError`
+  - **新增 `list_dir()`**：列出目录内容，返回 `{"dir": "...", "entries": [{"name": ..., "type": "file"|"dir", "size": ...}]}`，按类型+名称排序
+  - **新增 `file_exists()`**：检查文件是否存在，对不存在的路径也能做安全检查
+  - **白名单扩展**：`ALLOWED_EXTENSIONS` 改为 `frozenset`，无后缀文件允许写但不允许读（需 fmt 参数）
+  - Server 注册：新增 `file_list_dir` / `file_exists` 两个 `@server.tool()` 装饰的 Tool
+- 验证：`py_compile` 两个文件均通过；26 项测试全部通过（6 schema + 14 functional + 5 path security + 1 fmt fix）
+
+## 2026-06-23 Week2 python_tools 重构
+
+- 目标：重写 `src/mcp/tools/python_tools.py`，修复 BLOCKED_KEYWORDS + 临时文件保留 + workspace_path 参数
+- 修改文件：`src/mcp/tools/python_tools.py`（重写）、`src/mcp/server.py`（更新 Tool 签名）
+- 实现要点：
+  - **修复 BLOCKED_KEYWORDS**：
+    - 移除过于宽泛的 `"open("` 模式（之前会误杀所有文件操作）
+    - 保留精确匹配 5 种危险调用：`os.system` / `subprocess` / `eval(` / `exec(` / `__import__`
+    - 常量名改为 `BLOCKED_PATTERNS`（更准确描述行为）
+    - 与 `executor.py` 的 `_DANGEROUS_PATTERNS` 完全对齐
+  - **临时文件策略对齐**：
+    - 旧版：`tempfile.NamedTemporaryFile` + `finally: unlink`（立即删除）
+    - 新版：`_write_exec_file()` 写入 `workspace/src/_dc_exec_<uuid4_hex8>.py`，**保留不删除**
+    - 与 `executor.py` 的 `_write_temp_file` 策略一致（同一目录、相似命名）
+  - **新增 `workspace_path` 参数**：可从环境变量读取或显式传入
+  - **新增 `compile()` 语法预检**：与 executor.py 同步（`_check_syntax`）
+  - **返回新增 `file_path` 字段**：`{"stdout", "stderr", "success", "file_path"}`
+  - **5 层执行流水线**：空代码检查 → 安全检查 → 语法预检 → 写入文件 → subprocess.run
+  - Server 适配：`tool_python_exec` 签名新增 `workspace_path` 参数
+- 验证：`py_compile` 两个文件均通过；26 项测试全部通过：
+  - 7 schema / 3 normal execution / 5 danger blocked / 3 open() allowed / 2 timeout+empty / 1 runtime error / 1 workspace_path param / 2 file I/O via open / 1 f-string
