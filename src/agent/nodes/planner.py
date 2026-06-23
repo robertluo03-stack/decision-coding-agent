@@ -1,7 +1,10 @@
 """Planner 节点：将用户自然语言需求拆解为执行计划步骤列表。"""
 
+import hashlib
 import os
 import re
+
+from loguru import logger
 
 from src.agent.state import AgentState
 from src.agent.nodes.prompts.loader import load_prompt
@@ -19,14 +22,31 @@ def planner_node(state: AgentState) -> dict:
     """
     query = state["user_query"]
 
+    # ---- 入口日志 ----
+    logger.info(
+        "[Planner] 进入节点 | user_query={!r} | plan={} | retry_count={}",
+        query[:50],
+        len(state.get("plan", [])),
+        state.get("retry_count", 0),
+    )
+
     # 空输入检查
     if not query or not query.strip():
+        logger.warning("[Planner] 输入为空，返回错误计划")
         return {"plan": ["错误：输入为空"]}
 
     try:
         plan = _generate_plan_with_llm(query)
     except Exception as exc:
+        logger.error("[Planner] LLM 调用异常 | type={} | message={}", type(exc).__name__, exc)
         plan = [f"错误：Planner 调用失败 — {exc}"]
+
+    # ---- 出口日志 ----
+    logger.info(
+        "[Planner] 退出节点 | plan_steps={} | steps={!r}",
+        len(plan),
+        plan,
+    )
 
     return {"plan": plan}
 
@@ -45,6 +65,7 @@ def _generate_plan_with_llm(query: str) -> list[str]:
     """
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
+        logger.error("[Planner] DEEPSEEK_API_KEY 未设置")
         raise ValueError("环境变量 DEEPSEEK_API_KEY 未设置")
 
     from langchain_deepseek import ChatDeepSeek

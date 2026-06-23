@@ -30,7 +30,15 @@
       "Bash(python -m py_compile src/agent/nodes/prompts/coder_user.py)",
       "Bash(python -m py_compile src/agent/nodes/prompts/debugger_user.py)",
       "Bash(python -m pytest tests/ -v)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(python -m py_compile pyproject.toml)",
+      "Bash(echo \"PY_COMPILE_EXIT: $?\")",
+      "Bash(python -c \"import tomllib; tomllib.load\\(open\\('pyproject.toml', 'rb'\\)\\); print\\('TOML 语法检查通过'\\)\")",
+      "Bash(python -m py_compile src/agent/logger_config.py)",
+      "Bash(timeout 15 python main.py)",
+      "Bash(python -c \"import os; from dotenv import load_dotenv; load_dotenv\\(\\); print\\('API Key set:', bool\\(os.environ.get\\('DEEPSEEK_API_KEY'\\)\\)\\)\")",
+      "Bash(timeout 60 python main.py)",
+      "Bash(rm -f logs/debug.log logs/error.log)"
     ],
     "additionalDirectories": [
       "c:\\Users\\18500\\Desktop\\Study\\agent\\decision-coder\\src\\agent\\prompts"

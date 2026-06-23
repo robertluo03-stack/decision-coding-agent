@@ -9,11 +9,14 @@
 Week 2 计划升级为 Docker 沙箱。
 """
 
+import hashlib
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+from loguru import logger
 
 from src.agent.state import AgentState
 
@@ -167,8 +170,18 @@ def executor_node(state: AgentState) -> dict:
     workspace_path: str = state.get("workspace_path", ".")
     workspace = Path(workspace_path)
 
+    # ---- 入口日志 ----
+    logger.info(
+        "[Executor] 进入节点 | code_len={} | hash={} | workspace={}",
+        len(code),
+        hashlib.md5(code.encode()).hexdigest()[:8] if code else "N/A",
+        workspace_path,
+    )
+
     # ---- 1. 空代码检查 ----
     if not code or not code.strip():
+        logger.warning("[Executor] 代码为空，跳过执行")
+        logger.info("[Executor] 退出节点（空代码） | error={!r}", "No code to execute")
         return {
             "execution_result": None,
             "error": "No code to execute — generated_code is empty",
@@ -177,6 +190,8 @@ def executor_node(state: AgentState) -> dict:
 
     # ---- 2. 危险代码检查 ----
     if _has_dangerous_code(code):
+        logger.warning("[Executor] 检测到危险代码，已拦截")
+        logger.info("[Executor] 退出节点（危险代码） | error={!r}", "Dangerous code detected")
         return {
             "execution_result": None,
             "error": "Security: Dangerous code detected",
@@ -186,6 +201,8 @@ def executor_node(state: AgentState) -> dict:
     # ---- 3. 语法预检 ----
     syntax_err = _check_syntax(code)
     if syntax_err is not None:
+        logger.warning("[Executor] 语法预检失败 | error={!r}", syntax_err)
+        logger.info("[Executor] 退出节点（语法错误） | error={!r}", syntax_err)
         return {
             "execution_result": None,
             "error": syntax_err,
@@ -208,6 +225,17 @@ def executor_node(state: AgentState) -> dict:
         # 根据 returncode 和 stdout/stderr 决定 error 字段
         error = _build_error(result)
 
+        # ---- 出口日志 ----
+        logger.info(
+            "[Executor] 退出节点 | file_path={} | returncode={} | stdout_len={} | has_error={}",
+            str(tmp_path),
+            result.returncode,
+            len(result.stdout or ""),
+            error is not None,
+        )
+        if error:
+            logger.warning("[Executor] 执行有错误 | error={!r}", error[:100])
+
         return {
             "file_path": str(tmp_path),
             "execution_result": result.stdout if result.stdout else "(no output)",
@@ -215,18 +243,24 @@ def executor_node(state: AgentState) -> dict:
         }
 
     except subprocess.TimeoutExpired:
+        logger.error("[Executor] 执行超时（30s）")
+        logger.info("[Executor] 退出节点（超时） | file_path={}", str(tmp_path))
         return {
             "file_path": str(tmp_path),
             "execution_result": None,
             "error": "Execution timeout (30s)",
         }
     except FileNotFoundError:
+        logger.error("[Executor] Python 解释器未找到")
+        logger.info("[Executor] 退出节点（解释器未找到） | file_path={}", str(tmp_path))
         return {
             "file_path": str(tmp_path),
             "execution_result": None,
             "error": "Python interpreter not found",
         }
     except Exception as exc:
+        logger.error("[Executor] 执行异常 | type={} | message={}", type(exc).__name__, exc)
+        logger.info("[Executor] 退出节点（异常） | file_path={}", str(tmp_path))
         return {
             "file_path": str(tmp_path),
             "execution_result": None,

@@ -13,10 +13,13 @@
 注意：这个节点是 Human-in-the-loop 的核心，面试时会重点展示。
 """
 
+import hashlib
 import os
 import re
 import textwrap
 from typing import Any
+
+from loguru import logger
 
 from src.agent.state import AgentState
 from src.agent.nodes.prompts.loader import load_prompt
@@ -300,6 +303,7 @@ def _process_choice(
         try:
             fixed_code = _generate_fix_with_llm(error, code)
         except Exception:
+            logger.error("[Debugger] AI 修复失败，回退到规则修复")
             fixed_code = _fix_by_rule(code, error)
         print("[Debugger] ✅ AI 修复完成")
         return {
@@ -355,6 +359,7 @@ def _process_instruction(
     try:
         fixed_code = _generate_fix_with_llm(error, code, user_instruction)
     except Exception:
+        logger.error("[Debugger] 基于指令的修复失败，回退到规则修复")
         fixed_code = _fix_by_rule(code, error, instruction=user_instruction)
     print("[Debugger] ✅ 基于指令的修复完成")
 
@@ -445,11 +450,22 @@ def debugger_node(state: AgentState) -> dict:
     error = state.get("error", "")
     code = state.get("generated_code", "")
 
+    # ---- 入口日志 ----
+    logger.info(
+        "[Debugger] 进入节点 | error={!r} | code_len={} | code_hash={} | retry_count={}",
+        (error or "")[:100],
+        len(code),
+        hashlib.md5(code.encode()).hexdigest()[:8] if code else "N/A",
+        retry_count,
+    )
+
     # ---- 重试次数上限 ----
     if retry_count >= 2:
+        logger.warning("[Debugger] 已达最大重试次数（2），自动中止")
         print(
             "\n[Debugger] ⚠️ 已达最大重试次数（2），自动中止"
         )
+        logger.info("[Debugger] 退出节点（重试上限） | human_feedback=ABORT | retry_count={}", retry_count)
         return {
             "human_feedback": "ABORT",
             "retry_count": retry_count,
@@ -461,6 +477,7 @@ def debugger_node(state: AgentState) -> dict:
     try:
         analysis = _analyze_error_with_llm(error, code)
     except Exception as exc:
+        logger.error("[Debugger] LLM 分析失败，使用规则分类 | type={} | message={}", type(exc).__name__, exc)
         print(f"[Debugger] ⚠️ LLM 分析失败，使用规则分类: {exc}")
         analysis = _diagnose_by_rule(error)
 
@@ -487,6 +504,15 @@ def debugger_node(state: AgentState) -> dict:
         extra = _process_instruction(user_instruction, state=state)
         result.pop("human_feedback")  # 移除 NEED_INSTRUCTION 占位
         result.update(extra)
+
+    # ---- 出口日志 ----
+    fb = result.get("human_feedback", "?")
+    logger.info(
+        "[Debugger] 退出节点 | human_feedback={!r} | retry_count={} | new_code_len={}",
+        fb[:80],
+        result.get("retry_count", retry_count),
+        len(result.get("generated_code", "")),
+    )
 
     return result
 

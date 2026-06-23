@@ -95,6 +95,7 @@ class AgentState(TypedDict):
 - **验收**：输入3个不同任务，能走完完整流程，至少1个成功执行
 
 ### Week 2：沙箱安全 + 调试稳定
+- [ ] MCP工具封装（把现有File/Executor工具升级为MCP Server）
 - [ ] Docker沙箱执行（替代裸subprocess）
 - [ ] 命令白名单 + 网络隔离
 - [ ] 资源限制（CPU/内存/磁盘）
@@ -162,6 +163,8 @@ class AgentState(TypedDict):
 | 20260621| 生成初始依赖环境时，生成具体的代码| |要明确告诉ai先不要生成具体代码，只创建文件| |
 | 20260622| Matplotlib中文乱码| |最终演示前统一处理（换字体或改用Plotly）| |
 | 20260622| 测试输出中临时文件路径是系统Temp目录下的子目录，而不是workspace/src/| |临时文件路径待统一，"Week 2做Docker沙箱时一并处理| |
+Coder异常吞掉问题（已修复：Prompt禁止try/except）
+sys.executable问题（subprocess调用虚拟环境Python）
 ---
 
 ## 七、文件组织规范

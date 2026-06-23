@@ -137,15 +137,75 @@
   - 报告文件路径自动发现（按 mtime 倒序取最新）
   - Python 编译检查通过
 
-  ## 2026-06-23 A轮验收
-- 全部测试通过：~330 项检查
-  - test_planner.py (5 场景)
-  - test_coder.py (45 项)
-  - test_executor.py (67 项)
-  - test_reporter.py (60 项)
-  - test_debugger.py (83 项)
-  - test_graph.py (55 项)
-- Graph 编译正常，5 节点完整注册，两条条件路由正确
-- DEMO_INSTRUCTIONS.md 已创建
-- test_planner.py / test_coder.py import 路径修复（.parent → .parent.parent）
-- E2E场景全部通过（路由层面验证 + 单节点完整测试）
+## 2026-06-23 Week1 E2E测试全部通过
+- 场景1（黄金路径）：✅ 读取sales.csv统计销量，A001=990, A002=580
+- 场景2（错误+中止）：✅ 不存在的文件→Debugger→ABORT→失败报告
+- 场景3（错误+修复）：✅ Coder进化出动态列名探测，自动适配sku/SKU，未触发Debugger（更优）
+- 场景4（重试限制）：✅ 连续错误后强制ABORT
+- Week 1正式完成，进入Week 2
+
+## 2026-06-23 Week2 日志系统搭建（4 次迭代）
+
+### 迭代1：添加 loguru 依赖
+- 目标：确认 pyproject.toml 中包含 loguru 依赖
+- 结果：`loguru>=0.7.0` 已存在于 dependencies 中，无需修改
+- TOML 语法检查通过（使用 `tomllib` 替代 `py_compile`，因 .toml 非 Python 文件）
+
+### 迭代2：创建 logger_config.py 统一日志配置
+- 目标：实现 `src/agent/logger_config.py`，在 graph 入口初始化日志系统
+- 新增文件：`src/agent/logger_config.py`
+  - `init_logger()` 函数：
+    - 日志目录：项目根目录 `logs/`（自动创建）
+    - `debug.log`：DEBUG 及以上级别，按天轮转（rotation="00:00"），保留 7 天
+    - `error.log`：ERROR 及以上级别，按天轮转（rotation="00:00"），保留 7 天
+    - 日志格式：`{time:YYYY-MM-DD HH:mm:ss} | {level} | {name} | {message}`
+    - 幂等设计：每次调用先 `logger.remove()` 清空已有 handler 再重新添加
+    - `enqueue=True` 保证多线程安全
+  - 项目根目录通过 `Path(__file__).resolve().parent.parent.parent` 动态计算
+- 修改文件：`src/agent/graph.py`
+  - 在 `build_graph()` 入口处 `_ensure_imports()` 之后调用 `init_logger()`
+- 修改文件：`.gitignore`
+  - 新增 `logs/` 忽略规则
+- 验收：`py_compile` 无报错；运行 `main.py` 后 `logs/` 下生成 `debug.log` 和 `error.log`
+
+### 迭代3：5 个节点添加入口/出口/异常日志
+- 目标：在每个节点的 run 函数中统一添加 loguru 日志
+- 新增依赖：`import hashlib`（代码 hash）、`from loguru import logger`
+- 各节点日志策略：
+
+| 节点 | 入口日志 | 出口日志 | 异常日志 |
+|------|---------|---------|---------|
+| **Planner** | user_query 前50字符、plan 步骤数、retry_count | plan 步骤数 + 步骤列表内容 | LLM 调用异常、API Key 缺失 |
+| **Coder** | user_query 前50字符、plan 步骤数、code_len、human_feedback | code_len + code hash（md5 前8位）；区分 4 条路径：AI_FIX/回退/安全拦截/正常 | LLM 生成失败 |
+| **Executor** | code_len + code hash、workspace 路径 | file_path、returncode、stdout_len、has_error；error 存在时额外 warning | 超时、解释器未找到、执行异常 |
+| **Debugger** | error 前100字符、code_len + code hash、retry_count | human_feedback 前80字符、retry_count、new_code_len | LLM 分析失败、AI 修复失败、指令修复失败 |
+| **Reporter** | is_aborted、has_error、retry_count、plan 步骤数、code_len | report_len、文件路径 | — |
+
+- 关键约定：
+  - 不记录完整代码内容，只记录长度和 md5 hash（`hashlib.md5(code.encode()).hexdigest()[:8]`）
+  - 不向 stdout 打印进度消息（loguru 已接管）
+  - 不修改原有业务逻辑
+- 验收：5 个文件 `py_compile` 全部通过；运行 `main.py` 执行任务后日志显示完整节点流转
+
+### 迭代4：添加 compression + get_logger 便捷函数
+- 目标：完善 `logger_config.py`，支持旧日志压缩和节点级 logger 绑定
+- 修改文件：`src/agent/logger_config.py`
+  - 两个 handler 均添加 `compression="zip"`（旧日志自动 zip 压缩）
+  - 新增 `get_logger(name: str)` 函数：通过 `logger.bind(name=...)` 返回绑定模块名的 logger
+    - 日志格式中的 `{name}` 字段自动填充为传入的名称
+    - 用法：`logger = get_logger("Planner")` → 日志中显示 `... | INFO | Planner | ...`
+  - 根 logger 改为别名导入 `from loguru import logger as _root_logger`，避免与 `get_logger` 返回值混淆
+- 文件最终配置汇总：
+  - `rotation="00:00"` — 每天午夜轮转
+  - `retention="7 days"` — 保留最近 7 天
+  - `compression="zip"` — 旧日志自动 zip 压缩
+  - `enqueue=True` — 线程安全
+  - `encoding="utf-8"` — 统一 UTF-8 编码
+- 验收：`py_compile` 无报错；`get_logger("TestNode")` 绑定名称正确显示
+
+### Week2 日志系统总结
+- 涉及文件：7 个（新增 1 + 修改 6）
+  - 新增：`src/agent/logger_config.py`
+  - 修改：`.gitignore`、`src/agent/graph.py`、`src/agent/nodes/planner.py`、`coder.py`、`executor.py`、`debugger.py`、`reporter.py`
+- 技术栈：loguru（纯 Python，非重量级，符合项目约束）
+- 后续使用：各节点可导入 `get_logger("节点名")` 替代直接 `from loguru import logger`

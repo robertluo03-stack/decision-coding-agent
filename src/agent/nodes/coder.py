@@ -7,9 +7,12 @@
 - 不包含 os.system / subprocess / eval / exec 等危险调用
 """
 
+import hashlib
 import os
 import re
 import textwrap
+
+from loguru import logger
 
 from src.agent.state import AgentState
 from src.agent.nodes.prompts.loader import load_prompt
@@ -220,8 +223,26 @@ def coder_node(state: AgentState) -> dict:
     """
     # ---- 人在回路：AI 修复的代码直接使用 ----
     human_feedback = state.get("human_feedback")
+
+    # ---- 入口日志 ----
+    query = state.get("user_query", "")
+    code_len = len(state.get("generated_code", ""))
+    logger.info(
+        "[Coder] 进入节点 | user_query={!r} | plan_steps={} | code_len={} | human_feedback={!r}",
+        query[:50],
+        len(state.get("plan", [])),
+        code_len,
+        (human_feedback or "")[:50],
+    )
+
     if human_feedback and human_feedback.startswith("AI_FIX:"):
+        logger.info("[Coder] 检测到 AI_FIX 反馈，直接使用修复代码")
         code = human_feedback[len("AI_FIX:"):].strip()
+        logger.info(
+            "[Coder] 退出节点（AI_FIX 路径） | code_len={} | hash={}",
+            len(code),
+            hashlib.md5(code.encode()).hexdigest()[:8],
+        )
         return {"generated_code": code, "human_feedback": None}
 
     # ---- 获取输入 ----
@@ -231,35 +252,58 @@ def coder_node(state: AgentState) -> dict:
 
     # ---- 边界情况：计划为空或包含错误 ----
     if not plan or any(str(p).startswith("错误") for p in plan):
-        return {
-            "generated_code": _generate_fallback_code(plan, query, workspace),
-        }
+        code = _generate_fallback_code(plan, query, workspace)
+        logger.warning("[Coder] 计划为空或包含错误，使用回退代码 | code_len={}", len(code))
+        logger.info(
+            "[Coder] 退出节点（回退路径） | code_len={} | hash={}",
+            len(code),
+            hashlib.md5(code.encode()).hexdigest()[:8],
+        )
+        return {"generated_code": code}
 
     # ---- 边界情况：用户需求为空 ----
     if not query or not query.strip():
-        return {
-            "generated_code": _generate_fallback_code(
-                plan, "", workspace, error="用户需求为空"
-            ),
-        }
+        code = _generate_fallback_code(plan, "", workspace, error="用户需求为空")
+        logger.warning("[Coder] 用户需求为空，使用回退代码 | code_len={}", len(code))
+        logger.info(
+            "[Coder] 退出节点（回退路径） | code_len={} | hash={}",
+            len(code),
+            hashlib.md5(code.encode()).hexdigest()[:8],
+        )
+        return {"generated_code": code}
 
     # ---- 正常路径：使用 DeepSeek LLM 生成代码 ----
     try:
         code = _generate_code_with_llm(plan, query, workspace)
     except Exception as exc:
-        return {
-            "generated_code": _generate_fallback_code(
-                plan, query, workspace, error=str(exc)
-            ),
-        }
+        logger.error("[Coder] LLM 生成失败 | type={} | message={}", type(exc).__name__, exc)
+        code = _generate_fallback_code(plan, query, workspace, error=str(exc))
+        logger.info(
+            "[Coder] 退出节点（异常回退） | code_len={} | hash={}",
+            len(code),
+            hashlib.md5(code.encode()).hexdigest()[:8],
+        )
+        return {"generated_code": code}
 
     # ---- 后置安全检查 ----
     if _has_dangerous_code(code):
-        return {
-            "generated_code": _generate_fallback_code(
-                plan, query, workspace, error="LLM 生成代码包含危险调用，已拦截"
-            ),
-        }
+        logger.warning("[Coder] 代码包含危险调用，已拦截 | code_len={}", len(code))
+        code = _generate_fallback_code(
+            plan, query, workspace, error="LLM 生成代码包含危险调用，已拦截"
+        )
+        logger.info(
+            "[Coder] 退出节点（安全拦截） | code_len={} | hash={}",
+            len(code),
+            hashlib.md5(code.encode()).hexdigest()[:8],
+        )
+        return {"generated_code": code}
+
+    # ---- 出口日志 ----
+    logger.info(
+        "[Coder] 退出节点（正常） | code_len={} | hash={}",
+        len(code),
+        hashlib.md5(code.encode()).hexdigest()[:8],
+    )
 
     return {"generated_code": code}
 

@@ -8,6 +8,8 @@
 from datetime import datetime
 from pathlib import Path
 
+from loguru import logger
+
 from src.agent.state import AgentState
 
 
@@ -44,8 +46,25 @@ def reporter_node(state: AgentState) -> dict:
     is_aborted = state.get("human_feedback") == "ABORT"
     has_error = bool(state.get("error"))
 
+    # ---- 入口日志 ----
+    logger.info(
+        "[Reporter] 进入节点 | is_aborted={} | has_error={} | retry_count={} | plan_steps={} | code_len={}",
+        is_aborted,
+        has_error,
+        state.get("retry_count", 0),
+        len(state.get("plan", [])),
+        len(state.get("generated_code", "")),
+    )
+
     report = _build_report(state, is_aborted=is_aborted, has_error=has_error)
     filepath = _write_report(state, report)
+
+    # ---- 出口日志 ----
+    logger.info(
+        "[Reporter] 退出节点 | report_len={} | file_path={}",
+        len(report),
+        str(filepath),
+    )
 
     print(f"[Reporter] 报告已写入: {filepath}")
     return {"final_report": report}

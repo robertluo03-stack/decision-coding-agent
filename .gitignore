@@ -28,3 +28,6 @@ src/workspace/tests/*
 # OS
 Thumbs.db
 .DS_Store
+
+# Logs
+logs/

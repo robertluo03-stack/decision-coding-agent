@@ -114,6 +114,11 @@ def build_graph() -> StateGraph:
     """
     _ensure_imports()
 
+    # ---- 初始化日志系统 ----
+    from src.agent.logger_config import init_logger
+
+    init_logger()
+
     builder = StateGraph(AgentState)
 
     # ---- 注册节点 ----
