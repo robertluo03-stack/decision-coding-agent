@@ -287,3 +287,44 @@
   - `test_coder.py` **45/45 通过**（零回归）
   - AST 专项测试：5 种危险模式 + 3 种 subprocess 变体 + `__import__` 变形写法 全部拦截
   - 合法代码：`open('data.csv')` / csv DictReader / matplotlib / f-string / list comprehension 全部放行
+
+## 2026-06-23 Week2 MCP Server 启动完善 + console entry point
+
+- 目标：添加 `start_server(mode)` 入口函数 + `pyproject.toml` console script
+- 修改文件：`src/mcp/server.py`、`pyproject.toml`
+- 实现要点：
+  - **`start_server(mode: str = "stdio")`** — 统一入口函数，错误处理完整：
+    - 模式验证（`stdio` / `sse` / `streamable-http`），非法值抛出 `ValueError` 并列出可用模式
+    - 启动前日志（mode + registered tool count）
+    - `try/except` 包裹 `server.run()`，异常时 `logger.exception` 记录完整堆栈
+  - **`pyproject.toml` [project.scripts]**：
+    - 新增 `decision-coder-mcp = "src.mcp.server:start_server"`
+    - 安装后可通过 `decision-coder-mcp` 命令直接启动 MCP Server
+  - **`if __name__ == "__main__"`** 委托给 `start_server(mode="stdio")`，消除重复代码
+  - 未修改 `graph.py` 的任何调用逻辑
+- 验证：`py_compile` 通过；`start_server("invalid")` 正确抛出 ValueError；`list_tools()` 返回 6 个 Tool
+
+## 2026-06-23 Week2 Executor MCP 集成
+
+- 目标：让 Executor 节点支持通过 MCP Client 调用 python_exec Tool，MCP 成为标准工具层
+- 修改文件：`src/agent/nodes/executor.py`（新增 MCP 路径）、`src/mcp/tools/python_tools.py`（stdin=DEVNULL 修复）
+- 实现要点：
+  - **双路径架构**：
+    - `USE_MCP=true` → MCP Client (stdio transport) 调用 python_exec Tool
+    - 默认 → subprocess 本地执行（向后兼容，无 breaking change）
+  - **MCP 路径**（`_execute_via_mcp`）：
+    - 通过 `anyio.run()` 启动异步 MCP Client
+    - `StdioServerParameters` 启动 `python -m src.mcp.server` 子进程
+    - `ClientSession.initialize()` + `call_tool("python_exec", ...)` 执行代码
+    - 解析 MCP `CallToolResult.content[0].text` (JSON) → 映射回 AgentState 格式
+    - 失败时回退到 subprocess 路径（带 `logger.warning`）
+  - **前置安全检查**统一：空代码 / AST 安全 / 语法预检 在 MCP/subprocess 之前完成
+  - **Windows 兼容修复**：
+    - 问题：`subprocess.run` 在 MCP Server 内部继承 stdio transport pipe，导致子进程 hang
+    - 修复：`python_tools.py` 和 `executor.py` 的 `subprocess.run` 均添加 `stdin=subprocess.DEVNULL`
+  - **AgentState 接口不变**：无论 MCP 还是 subprocess，返回 `{"execution_result", "error", "file_path"}` 格式一致
+- 验证：
+  - `py_compile` 两个文件均通过
+  - `test_executor.py` **67/67 通过**（USE_MCP 未设置，默认 subprocess 路径，零回归）
+  - `USE_MCP=true` 集成测试 **5/5 通过**（normal / dangerous / multiline / CSV read / syntax error）
+  - MCP 路径 python_exec 调用耗时 ~0.1s（与 subprocess 路径相当）

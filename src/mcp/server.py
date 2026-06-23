@@ -140,8 +140,43 @@ def tool_python_exec(code: str, timeout: int = 30, workspace_path: str | None = 
 # 启动入口
 # ---------------------------------------------------------------------------
 
+
+def start_server(mode: str = "stdio") -> None:
+    """启动 DecisionCoder MCP Server。
+
+    支持的 transport 模式：
+      - "stdio"          — 标准输入/输出（默认，用于本地 Claude Code / MCP Client 调试）
+      - "sse"            — Server-Sent Events（HTTP 长连接，用于浏览器 / Web 客户端）
+      - "streamable-http" — Streamable HTTP（MCP 2025+ 推荐模式）
+
+    Server 启动时自动注册所有已用 @server.tool() 装饰的 Tool。
+
+    Args:
+        mode: transport 模式，默认 "stdio"
+
+    Raises:
+        ValueError: 未知的 transport 模式
+    """
+    valid_modes = ("stdio", "sse", "streamable-http")
+    if mode not in valid_modes:
+        raise ValueError(
+            f"不支持的 transport 模式: {mode!r}。"
+            f"请选择: {', '.join(valid_modes)}"
+        )
+
+    tool_count = len(server._tool_manager.list_tools())  # type: ignore[attr-defined]
+    logger.info(
+        "DecisionCoder MCP Server 启动 | mode={} | tools={}",
+        mode,
+        tool_count,
+    )
+
+    try:
+        server.run(transport=mode)  # type: ignore[arg-type]
+    except Exception as exc:
+        logger.exception("MCP Server 启动失败 | mode={} | error={}", mode, exc)
+        raise
+
+
 if __name__ == "__main__":
-    logger.info("DecisionCoder MCP Server 启动 (stdio transport)")
-    # run() 是同步函数，内部通过 anyio.run() 启动异步事件循环
-    # transport="stdio" 使 Server 通过标准输入/输出与 MCP Client 通信
-    server.run(transport="stdio")
+    start_server(mode="stdio")

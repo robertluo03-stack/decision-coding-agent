@@ -196,6 +196,7 @@ def execute_python(
             text=True,
             timeout=timeout,
             cwd=str(ws),
+            stdin=subprocess.DEVNULL,  # 防止子进程继承 stdio transport pipe（Windows 兼容）
         )
 
         if result.returncode == 0:

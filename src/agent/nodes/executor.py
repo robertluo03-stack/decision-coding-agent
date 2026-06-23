@@ -6,14 +6,14 @@
   3. subprocess 隔离执行，30 秒超时
   4. 捕获 stdout / stderr
 
-Week 2 计划升级为 Docker 沙箱。
+Week 2：支持通过 MCP Client 调用 python_exec Tool（USE_MCP=true）。
 """
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 from loguru import logger
@@ -130,6 +130,103 @@ def _build_error(result: subprocess.CompletedProcess) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# MCP Client 执行路径（Week 2）
+# ---------------------------------------------------------------------------
+
+
+def _should_use_mcp() -> bool:
+    """检查是否应启用 MCP 执行路径。
+
+    环境变量 USE_MCP=true 时启用，默认 false 保持向后兼容。
+    """
+    return os.environ.get("USE_MCP", "").strip().lower() in ("true", "1", "yes")
+
+
+async def _execute_via_mcp(
+    code: str,
+    workspace: Path,
+) -> dict:
+    """通过 MCP Client（stdio transport）调用 python_exec Tool 执行代码。
+
+    工作流程：
+      1. 启动 src.mcp.server 子进程（stdio transport）
+      2. 通过 ClientSession 建立 MCP 连接
+      3. 调用 python_exec Tool
+      4. 将 MCP 返回结果映射回 Executor AgentState 格式
+
+    Args:
+        code: Python 源代码
+        workspace: 工作区根目录
+
+    Returns:
+        {"execution_result": str|None, "error": str|None, "file_path": str|None}
+    """
+    import anyio
+    from mcp.client.stdio import stdio_client, StdioServerParameters
+    from mcp import ClientSession
+
+    # MCP Server 作为子进程启动
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "src.mcp.server"],
+        env={
+            **os.environ,
+            "WORKSPACE_PATH": str(workspace),
+        },
+        cwd=str(Path(__file__).resolve().parent.parent.parent.parent),
+    )
+
+    try:
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                result = await session.call_tool(
+                    "python_exec",
+                    {
+                        "code": code,
+                        "timeout": EXECUTION_TIMEOUT,
+                        "workspace_path": str(workspace),
+                    },
+                )
+
+        # 解析 MCP result（content[0].text 是 JSON 字符串）
+        if result.content and hasattr(result.content[0], "text"):
+            try:
+                data = json.loads(result.content[0].text)
+            except json.JSONDecodeError:
+                data = {
+                    "stdout": "",
+                    "stderr": f"Failed to parse MCP response: {result.content[0].text[:200]}",
+                    "success": False,
+                    "file_path": None,
+                }
+        else:
+            data = {"stdout": "", "stderr": "Empty MCP response", "success": False, "file_path": None}
+
+        # 映射到 Executor AgentState 格式
+        if data.get("success"):
+            stdout = data.get("stdout", "")
+            error = None  # type: str | None
+        else:
+            stdout = data.get("stdout", "")
+            error = data.get("stderr") or "Execution failed (MCP tool returned error)"
+
+        return {
+            "execution_result": stdout if stdout else "(no output)",
+            "error": error,
+            "file_path": data.get("file_path"),
+        }
+
+    except ImportError as exc:
+        # mcp 或 anyio 未安装 — 由调用方回退
+        raise RuntimeError(f"MCP SDK 不可用: {exc}") from exc
+    except Exception as exc:
+        logger.error("[Executor] MCP 执行失败 | error={}", exc)
+        raise
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
@@ -141,8 +238,8 @@ def executor_node(state: AgentState) -> dict:
         1. 空代码检查
         2. 危险代码检查
         3. 语法预检（compile）
-        4. 写入临时文件
-        5. subprocess.run 执行（30s 超时，cwd=workspace_path）
+        4a. [USE_MCP=true] 通过 MCP Client 调用 python_exec Tool
+        4b. [默认] 写入临时文件 → subprocess.run 执行（向后兼容）
 
     输入:
         state["generated_code"]   — str，Python 代码
@@ -183,7 +280,7 @@ def executor_node(state: AgentState) -> dict:
             "file_path": None,
         }
 
-    # ---- 2. 危险代码检查 ----
+    # ---- 2. 危险代码检查（统一 AST 安全检查） ----
     if _has_dangerous_code(code):
         logger.warning("[Executor] 检测到危险代码，已拦截")
         logger.info("[Executor] 退出节点（危险代码） | error={!r}", "Dangerous code detected")
@@ -204,10 +301,54 @@ def executor_node(state: AgentState) -> dict:
             "file_path": None,
         }
 
-    # ---- 4. 写入临时文件 ----
+    # ---- 4a. MCP 路径（USE_MCP=true） ----
+    if _should_use_mcp():
+        logger.info("[Executor] 使用 MCP 路径执行代码 | code_len={}", len(code))
+        try:
+            import anyio
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None:
+                # 已有事件循环（pytest-asyncio 场景）→ 用 run_until_complete
+                import concurrent.futures
+                future = asyncio.ensure_future(
+                    _execute_via_mcp(code, workspace)
+                )
+                # 在已有循环中直接 await
+                result = asyncio.get_event_loop().run_until_complete(
+                    asyncio.ensure_future(_execute_via_mcp(code, workspace))
+                )
+            else:
+                result = anyio.run(lambda: _execute_via_mcp(code, workspace))
+
+            logger.info(
+                "[Executor] MCP 路径退出 | has_error={}",
+                result["error"] is not None,
+            )
+            return result
+
+        except ImportError:
+            # mcp / anyio 未安装 → 回退到 subprocess
+            logger.warning(
+                "[Executor] MCP SDK 不可用（mcp/anyio 未安装），回退到 subprocess 路径"
+            )
+        except Exception as exc:
+            # MCP 启动失败 / 连接断开 → 回退到 subprocess
+            logger.warning(
+                "[Executor] MCP 路径失败（{}），回退到 subprocess 路径",
+                exc,
+            )
+
+    # ---- 4b. subprocess 路径（默认 / fallback） ----
+    logger.info("[Executor] 使用 subprocess 路径执行代码")
+
     tmp_path = _write_temp_file(code, workspace)
 
-    # ---- 5. subprocess 执行 ----
     try:
         result = subprocess.run(
             [sys.executable, str(tmp_path)],
@@ -215,6 +356,7 @@ def executor_node(state: AgentState) -> dict:
             text=True,
             timeout=EXECUTION_TIMEOUT,
             cwd=str(workspace),
+            stdin=subprocess.DEVNULL,  # 防止子进程继承 stdio transport pipe（Windows 兼容）
         )
 
         # 根据 returncode 和 stdout/stderr 决定 error 字段

@@ -220,7 +220,7 @@ server.py 是 10% 的占位代码（_StubMCPServer），需要完全重写。
 ```
 请帮我完成以下任务：
 
-1. 读取文件 src/mcp/server.py（2.1 产物）。
+1. 读取文件 src/mcp/server.py。
 2. 确保 MCP Server 的本地启动逻辑完整：
    - 支持 stdio 模式（默认，用于本地调试）
    - 支持 sse 模式（可选，用于后续扩展）
@@ -252,7 +252,7 @@ Week 2 的核心目标是让 MCP 成为标准工具层，Executor 通过 MCP 调
    - 优势：彻底统一，MCP 成为唯一工具层
 3. 实现：
    - 在 executor.py 中实现 MCP Client 调用（本地 stdio 连接）
-   - 复用 security_checker（2.4 产物）进行前置安全检查
+   - 复用 security_checker进行前置安全检查
    - 保留 fallback：MCP 不可用时回退到原有 subprocess（带警告日志）
    - 保持 AgentState 接口不变
 4. 环境变量 USE_MCP=true 时启用 MCP 路径，默认 false 保持向后兼容。
