@@ -116,6 +116,51 @@ class DockerRunner:
         return self.workspace_path / relative
 
     # ------------------------------------------------------------------
+    # 容器清理
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cleanup_container(container_name: str) -> None:
+        """超时后强制终止并删除容器，确保不残留。
+
+        先 docker kill（发送 SIGKILL 立即终止进程），
+        再 docker rm（删除容器资源）。
+
+        所有异常静默吞掉 — 容器可能已自然退出并被 --rm 清理，
+        此时 kill/rm 会报错，属正常情况。
+
+        Args:
+            container_name: 容器名称（--name 参数指定）
+        """
+        # Step 1: force kill — immediately terminates the container process
+        try:
+            subprocess.run(
+                ["docker", "kill", container_name],
+                capture_output=True,
+                text=True,
+                timeout=10,  # kill 本身不应耗时，10s 足够
+                stdin=subprocess.DEVNULL,
+            )
+            logger.debug("[DockerRunner] docker kill {} 完成", container_name)
+        except Exception:
+            # Container may have already exited or been removed by --rm
+            logger.debug("[DockerRunner] docker kill {} 跳过（容器可能已退出）", container_name)
+
+        # Step 2: remove — deletes container resources from disk
+        try:
+            subprocess.run(
+                ["docker", "rm", container_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                stdin=subprocess.DEVNULL,
+            )
+            logger.debug("[DockerRunner] docker rm {} 完成", container_name)
+        except Exception:
+            # Container may have already been cleaned up
+            logger.debug("[DockerRunner] docker rm {} 跳过（容器可能已清理）", container_name)
+
+    # ------------------------------------------------------------------
     # 执行入口
     # ------------------------------------------------------------------
 
@@ -124,12 +169,13 @@ class DockerRunner:
 
         执行流程：
           1. 将 code 写入宿主机 {workspace_path}/src/temp_{uuid}.py
-          2. 使用 docker run --rm 启动一次性容器：
+          2. 使用 docker run --rm --name <uuid> 启动一次性容器：
              - 只读挂载 workspace 用于代码读取
              - 单独可写挂载 /workspace/output 用于输出文件
              - 容器内以非 root 用户 appuser 执行 python /workspace/src/temp_{uuid}.py
           3. 捕获 stdout、stderr、returncode
-          4. 返回结构化执行结果
+          4. 超时时强制 docker kill + docker rm 确保不残留容器
+          5. 返回结构化执行结果
 
         Args:
             code: 待执行的 Python 源代码
@@ -138,8 +184,8 @@ class DockerRunner:
         Returns:
             {
                 "stdout": str,       # 标准输出
-                "stderr": str,       # 标准错误
-                "returncode": int,   # 退出码（0=成功，-1=基础设施错误）
+                "stderr": str,       # 标准错误（超时时包含 "[TIMEOUT]" 标识）
+                "returncode": int,   # 退出码（0=成功，-1=超时/基础设施错误）
                 "file_path": str,    # 宿主机上临时文件的绝对路径
             }
         """
@@ -176,27 +222,29 @@ class DockerRunner:
 
         container_file = f"{self._CONTAINER_SRC_DIR}/{file_name}"
 
+        # 生成唯一容器名，用于超时时精确 kill
+        container_name = f"dc-sandbox-{uuid.uuid4().hex[:12]}"
+
         logger.info(
-            "[DockerRunner] 执行准备完成 | host_file={} | container_file={} | code_len={}",
+            "[DockerRunner] 执行准备完成 | host_file={} | container={} | code_len={}",
             host_file,
-            container_file,
+            container_name,
             len(code),
         )
 
         # ---- 3. 构建 docker run 命令 ----
-        # --rm:           执行完成后自动删除容器
+        # --name:         指定容器名，超时时用于 docker kill 定位
+        # --rm:           正常退出时自动删除容器
         # -v ws:/workspace:ro: 只读挂载宿主机 workspace（安全：代码无法篡改工作区）
         # -v ws/output:/workspace/output: 单独可写挂载输出目录
         # --network none: 禁用网络（防止恶意外连 / 数据泄露）
         cmd = [
-            "docker", "run", "--rm",
+            "docker", "run", "--rm", "--name", container_name,
             # 文件系统挂载
             "-v", f"{self.workspace_path}:{self._CONTAINER_WORKSPACE}:ro",
             "-v", f"{output_dir}:{self._CONTAINER_OUTPUT_DIR}",
             # 网络隔离
             "--network", "none",
-            # 非 root 用户（Dockerfile 已设 USER appuser，此处显式指定确保一致性）
-            # Dockerfile 中 UID 通常是 1000
             self.image,
             "python", container_file,
         ]
@@ -229,8 +277,42 @@ class DockerRunner:
             }
 
         except subprocess.TimeoutExpired:
-            error_msg = f"容器执行超时（{timeout}s）"
-            logger.warning("[DockerRunner] {}", error_msg)
+            # ---- 超时处理：强制 kill + rm，确保不残留容器 ----
+            # subprocess.run 超时后会终止 docker CLI 进程，但容器仍会继续运行。
+            # --rm 仅在容器正常退出时清理，超时场景无效，必须手动清理。
+            logger.warning(
+                "[DockerRunner] 执行超时（{}s）| container={} | 开始强制清理",
+                timeout,
+                container_name,
+            )
+
+            self._cleanup_container(container_name)
+
+            # 二次确认：防止极端情况下清理失败导致残留
+            try:
+                check = subprocess.run(
+                    ["docker", "ps", "-a", "--filter", f"name={container_name}", "--format", "{{.ID}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    stdin=subprocess.DEVNULL,
+                )
+                if check.stdout.strip():
+                    logger.warning(
+                        "[DockerRunner] 容器仍存在，尝试 docker rm -f | id={}",
+                        check.stdout.strip(),
+                    )
+                    subprocess.run(
+                        ["docker", "rm", "-f", container_name],
+                        capture_output=True,
+                        timeout=10,
+                        stdin=subprocess.DEVNULL,
+                    )
+            except Exception:
+                pass  # 二次清理失败不再重试
+
+            error_msg = f"[TIMEOUT] 容器执行超时（{timeout}s），已强制终止并清理容器 {container_name}"
+            logger.info("[DockerRunner] {}", error_msg)
             return {
                 "stdout": "",
                 "stderr": error_msg,
