@@ -400,3 +400,27 @@
 - 测试：
   - test_debugger.py 83/83 通过（零回归）
   - test_debugger_enhanced.py 72/72 通过（新增 28 项诊断/修复/辅助函数测试）
+
+## 2026-06-30 Debugger ABORT 增强 + Reporter 失败报告
+
+- 目标：完善 retry_count >= 2 的终止流程和 ABORT 状态下的失败报告
+- Debugger 增强（debugger_node retry_count >= 2 分支）：
+  - 不调用 DeepSeek API（入口上限检查在最前面，LLM 代码路径不可达）
+  - 新增 error 字段: "已达到最大重试次数（2），强制终止"
+  - 返回完整 AgentState: {human_feedback, retry_count, error}
+  - LangGraph 将 error 合并到累计状态中，Reporter 可直接读取
+- Reporter 增强：
+  - _write_report() 按状态选择文件名前缀: ABORT → fail_<timestamp>.md，其他 → report_<timestamp>.md
+  - 报告附录中报告文件名也同步适配
+  - _build_report 已有 ABORT 分支（标题: 任务中止报告，图标: 🛑），保持不变
+- 测试：
+  - test_debugger.py 83/83 通过（零回归）
+  - test_reporter.py 60/60 通过（零回归）
+  - test_debugger_enhanced.py 72/72 通过（零回归）
+  - test_abort_flow.py 49/49 通过（新增 6 项集成测试）
+    - Debugger retry=2: 不调 LLM + ABORT + error 字段
+    - retry=2/3/5 x 3 种错误类型全部直接 ABORT
+    - Reporter ABORT 报告包含 error + retry_count
+    - fail_<timestamp>.md 命名正确
+    - 失败报告 Markdown 结构完整
+    - 端到端：Debugger(ABORT) → Reporter(fail_*.md)

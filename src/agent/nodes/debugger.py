@@ -860,18 +860,22 @@ def debugger_node(state: AgentState) -> dict:
 
     # ---- 重试次数上限 ----
     # 约束：根据 AgentState 设计，retry_count >= 2 时强制终止循环，
-    # 不再调用 LLM，直接返回 ABORT 进入 Reporter。
+    # 不再调用 LLM（节省 token），直接返回 ABORT 进入 Reporter。
     # 此时不递增 retry_count — 已触发上限，立即终止绕开所有 LLM 调用。
     # flow: Executor(error) → Debugger(entry check) → Reporter(ABORT)
     if retry_count >= 2:
-        logger.warning("[Debugger] 已达最大重试次数（2），自动中止")
-        print(
-            "\n[Debugger] ⚠️ 已达最大重试次数（2），自动中止"
+        abort_msg = "已达到最大重试次数（2），强制终止"
+        logger.warning("[Debugger] {}", abort_msg)
+        print(f"\n[Debugger] ⚠️ {abort_msg}")
+        logger.info(
+            "[Debugger] 退出节点（重试上限） | human_feedback=ABORT | retry_count={} | error={!r}",
+            retry_count,
+            abort_msg,
         )
-        logger.info("[Debugger] 退出节点（重试上限） | human_feedback=ABORT | retry_count={}", retry_count)
         return {
             "human_feedback": "ABORT",
             "retry_count": retry_count,
+            "error": abort_msg,
         }
 
     # ---- 错误分析 ----

@@ -211,7 +211,7 @@ def _build_report(
     lines.append("")
     lines.append(f"- **工作区**: `{state.get('workspace_path', 'N/A')}`")
     lines.append(f"- **临时执行文件**: `{state.get('file_path', 'N/A')}`")
-    lines.append(f"- **报告文件**: `workspace/reports/report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md`")
+    lines.append(f"- **报告文件**: `workspace/reports/{'fail' if is_aborted else 'report'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md`")
     lines.append("")
 
     return "\n".join(lines)
@@ -243,12 +243,16 @@ def _format_feedback_label(feedback: str) -> str:
 
 
 def _write_report(state: AgentState, report: str) -> Path:
-    """将报告写入 workspace/reports/report_<timestamp>.md。
+    """将报告写入 workspace/reports/ 目录。
+
+    文件命名规则：
+      - 执行成功/异常（非 ABORT）→ report_<timestamp>.md
+      - 中止执行（ABORT）         → fail_<timestamp>.md
 
     自动创建 reports/ 目录（如不存在）。
 
     Args:
-        state: AgentState（用于获取 workspace_path）
+        state: AgentState（用于获取 workspace_path 和 human_feedback）
         report: Markdown 报告内容
 
     Returns:
@@ -259,7 +263,9 @@ def _write_report(state: AgentState, report: str) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"report_{ts}.md"
+    is_aborted = state.get("human_feedback") == "ABORT"
+    prefix = "fail" if is_aborted else "report"
+    filename = f"{prefix}_{ts}.md"
     filepath = report_dir / filename
 
     filepath.write_text(report, encoding="utf-8")
