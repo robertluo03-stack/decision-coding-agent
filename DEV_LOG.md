@@ -366,3 +366,37 @@
   - test_debugger.py 83/83 通过（零回归）
   - test_graph.py 55/55 通过
   - test_security.py 7/7 通过
+
+## 2026-06-30 Debugger 规则回退增强
+
+- 目标：增强 _diagnose_by_rule() 和 _fix_by_rule() 的规则回退逻辑
+- 新增错误类型覆盖（共 12 类）：
+  - SyntaxError / IndentationError：行号定位 + 括号/缩进提示
+  - NameError：提取未定义变量名 + 常见导入建议（pd/np/math/plt）
+  - ModuleNotFoundError / ImportError：提取模块名 + pip 安装 / 标准库替代建议
+  - TypeError：类型转换建议（str/int/float + type()）
+  - IndexError：越界提示 + len() 边界检查建议
+  - KeyError：键名提取 + .get() / df.columns 建议
+  - ZeroDivisionError：除零保护 + if divisor != 0 建议
+  - ValueError：值范围/格式检查建议
+  - AttributeError：hasattr / type(obj) 防御建议
+  - FileNotFoundError：路径检查 + os.path.exists 建议
+  - Timeout：循环终止/效率优化建议
+  - 未知错误：通用提示（保持：未知错误，建议检查代码逻辑）
+- 新增辅助函数：
+  - _extract_error_line / _extract_error_line_number：从 traceback 提取行号
+  - _extract_undefined_name：从 NameError 提取变量名
+  - _extract_missing_module：从 ModuleNotFoundError 提取模块名
+  - _extract_key_name：从 KeyError 提取键名
+  - _has_unbalanced_parens：括号配对快速检测
+- _fix_by_rule 增强：
+  - SyntaxError → 自动补括号 + 括号失衡检测
+  - ModuleNotFoundError → 扩展第三方库列表 + 标准库判断
+  - ZeroDivisionError → 除零保护（新增）
+  - NameError → 缺失导入提示（新增）
+  - KeyError → .get() 防御建议（新增）
+  - IndexError / TypeError / ValueError / AttributeError → 定向 try/except 包装
+  - _wrap_with_try_except 新增 comment 参数嵌入上下文
+- 测试：
+  - test_debugger.py 83/83 通过（零回归）
+  - test_debugger_enhanced.py 72/72 通过（新增 28 项诊断/修复/辅助函数测试）

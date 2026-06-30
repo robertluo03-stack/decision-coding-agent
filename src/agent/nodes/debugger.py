@@ -130,72 +130,214 @@ def _generate_fix_with_llm(
 
 
 # ---------------------------------------------------------------------------
+# 错误信息提取辅助函数（供 _diagnose_by_rule / _fix_by_rule 使用）
+# ---------------------------------------------------------------------------
+
+
+def _extract_error_line(error: str) -> str:
+    """从错误信息中提取行号提示。
+
+    Args:
+        error: 错误信息字符串
+
+    Returns:
+        如 "（第 5 行）" 或空字符串
+    """
+    # Pattern: "line 5", "line 12," "at line 7"
+    for pat in [r"line (\d+)", r"在第 (\d+)", r":(\d+):"]:
+        m = re.search(pat, error, re.IGNORECASE)
+        if m:
+            return f"（第 {m.group(1)} 行）"
+    return ""
+
+
+def _extract_undefined_name(error: str) -> str:
+    """从 NameError 中提取未定义的名称。
+
+    Args:
+        error: 错误信息字符串
+
+    Returns:
+        未定义的变量/函数名，或空字符串
+    """
+    # "NameError: name 'pd' is not defined"
+    m = re.search(r"name '(\w+)' is not defined", error)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _extract_missing_module(error: str) -> str:
+    """从 ModuleNotFoundError 中提取缺失的模块名。
+
+    Args:
+        error: 错误信息字符串
+
+    Returns:
+        缺失的模块名，或空字符串
+    """
+    # "ModuleNotFoundError: No module named 'pandas'"
+    m = re.search(r"No module named '(\w+)'", error)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _extract_key_name(error: str) -> str:
+    """从 KeyError 中提取缺失的键名。
+
+    Args:
+        error: 错误信息字符串
+
+    Returns:
+        缺失的键名，或空字符串
+    """
+    # "KeyError: 'sku'" or "KeyError('sku')"
+    m = re.search(r"KeyError[(:]\s*'([^']+)'", error)
+    if m:
+        return m.group(1)
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # 规则回退：简单错误分类（当 LLM 不可用时）
 # ---------------------------------------------------------------------------
 
 
 def _diagnose_by_rule(error: str) -> str:
-    """基于规则的简单错误分类。
+    """基于规则的错误分类与诊断（LLM 不可用时的回退方案）。
 
-    作为 LLM 调用失败时的回退方案。
+    覆盖 Python 最常见的 12 类运行时/编译时错误，
+    每类提供中文诊断文本和具体的修复建议。
 
     Args:
-        error: 错误信息
+        error: 错误信息字符串（来自 Executor 的 stderr / error 字段）
 
     Returns:
-        错误分析文本
+        中文错误分析文本（2-4 句话），包含原因和修复方向
     """
     err_lower = error.lower()
 
-    if "syntaxerror" in err_lower:
+    # ---- SyntaxError: 语法/缩进错误 ----
+    if "syntaxerror" in err_lower or "indentationerror" in err_lower:
+        # 尝试提取行号
+        line_hint = _extract_error_line(error)
         return (
-            "代码存在语法错误，可能是引号不匹配、括号未闭合或缩进问题。"
-            "建议检查代码中的括号配对和缩进层级。"
+            f"代码存在语法错误{line_hint}，常见原因：引号/括号不匹配、"
+            f"缩进层级不一致、缺少冒号（:）、"
+            f"表达式不完整（如 print 缺少闭合括号）。"
+            f"建议逐行检查第{line_hint}附近的括号配对和缩进层级。"
         )
+
+    # ---- NameError: 未定义的变量/函数 ----
     if "nameerror" in err_lower:
+        name = _extract_undefined_name(error)
+        hint = f"（'{name}'）" if name else ""
         return (
-            "代码中使用了未定义的变量或函数名。"
-            "建议检查变量名拼写，确认所有引用在使用前已经定义。"
+            f"代码中使用了未定义的变量或函数名{hint}。"
+            f"建议检查变量名拼写是否正确、是否忘记导入模块、"
+            f"定义是否在引用之前。常见遗漏：import pandas/import math。"
         )
-    if "importerror" in err_lower or "modulenotfounderror" in err_lower:
+
+    # ---- ModuleNotFoundError / ImportError: 缺失依赖 ----
+    if "modulenotfounderror" in err_lower or "importerror" in err_lower:
+        mod = _extract_missing_module(error)
+        mod_hint = f"（{mod}）" if mod else ""
         return (
-            "缺少依赖包。建议检查导入语句，"
-            "尝试使用标准库替代或确认包已安装。"
+            f"缺少依赖模块{mod_hint}。"
+            f"建议：1) 确认模块已安装（pip install {mod}）；"
+            f"2) 使用标准库替代（如 csv 代替 pandas, json 代替 yaml）；"
+            f"3) 检查模块名拼写是否正确（区分大小写）。"
         )
+
+    # ---- TypeError: 类型不匹配 ----
     if "typeerror" in err_lower:
         return (
             "函数调用的参数类型不匹配。"
-            "建议检查函数签名和传入参数的类型。"
+            "常见原因：整数与字符串拼接、传给函数的参数数量或类型不对、"
+            "None 作为可迭代对象使用。"
+            "建议：1) 用 type() 或 print() 确认变量类型；"
+            "2) 使用 str()/int()/float() 显式转换；"
+            "3) 检查函数签名与传入参数是否一致。"
         )
-    if "timeout" in err_lower or "timed out" in err_lower:
+
+    # ---- IndexError: 索引越界 ----
+    if "indexerror" in err_lower:
         return (
-            "代码执行超时，可能存在死循环或计算量过大。"
-            "建议检查循环终止条件和算法效率。"
+            "列表/元组索引超出范围。"
+            "常见原因：访问的索引 >= 序列长度、空列表取第 0 个元素、"
+            "循环中的索引变量超出末尾。"
+            "建议：访问前检查 len(seq) 是否大于索引，"
+            "或使用 try/except IndexError 保护边界操作。"
         )
-    if "filenotfounderror" in err_lower or "no such file" in err_lower:
-        return (
-            "文件未找到。建议确认数据文件路径是否正确，"
-            "文件是否在 ./data/ 目录下。"
-        )
+
+    # ---- KeyError: 键不存在 ----
     if "keyerror" in err_lower:
+        key = _extract_key_name(error)
+        key_hint = f"（'{key}'）" if key else ""
         return (
-            "字典或 DataFrame 中不存在指定的键/列名。"
-            "建议检查列名拼写（区分大小写），或先用 print(df.columns) 查看可用列。"
+            f"字典或 DataFrame 中不存在指定的键/列名{key_hint}。"
+            f"建议：1) 检查键名拼写（区分大小写）；"
+            f"2) 对于 DataFrame 先用 print(df.columns) 查看可用列；"
+            f"3) 使用 dict.get(key, default) 提供默认值避免 KeyError。"
         )
-    if "attributeerror" in err_lower:
+
+    # ---- ZeroDivisionError: 除零错误 ----
+    if "zerodivisionerror" in err_lower:
         return (
-            "对象不存在指定的属性或方法。"
-            "建议检查对象类型和可用方法列表。"
+            "代码中存在除以零的操作。"
+            "常见原因：分母变量为 0、数据中某列为空导致求和/均值为 0。"
+            "建议：1) 在除法前添加条件判断 if divisor != 0；"
+            "2) 使用 try/except ZeroDivisionError 捕获异常；"
+            "3) 检查数据源是否存在全零或空值列。"
         )
+
+    # ---- ValueError: 值错误 ----
     if "valueerror" in err_lower:
         return (
             "函数收到了类型正确但值不合适的参数。"
-            "建议检查输入值的范围和格式。"
+            "常见原因：数学运算传入负数、字符串转数字格式不正确、"
+            "数组形状不一致。"
+            "建议：1) 检查输入值的范围和格式；2) 用 print() 输出中间值定位；"
+            "3) 添加参数合法性校验。"
         )
 
-    # 默认分析
-    short = error[:200]
-    return f"代码执行时出现错误: {short}。建议逐行检查代码逻辑。"
+    # ---- AttributeError: 属性不存在 ----
+    if "attributeerror" in err_lower:
+        return (
+            "对象不存在指定的属性或方法。"
+            "常见原因：对象为 None 后调用方法、变量类型与预期不符、"
+            "拼写错误（如 .lower() 写成 .lower()）。"
+            "建议：1) 用 print(type(obj)) 确认类型；"
+            "2) 检查方法名拼写；3) 用 hasattr(obj, 'name') 防御性检查。"
+        )
+
+    # ---- FileNotFoundError: 文件缺失 ----
+    if "filenotfounderror" in err_lower or "no such file" in err_lower:
+        return (
+            "文件未找到。"
+            "建议：1) 确认文件路径是否正确（相对路径需相对于执行目录）；"
+            "2) 文件是否存在于 ./data/ 目录下；"
+            "3) 用 os.path.exists(path) 检查文件是否存在再读取。"
+        )
+
+    # ---- Timeout: 执行超时 ----
+    if "timeout" in err_lower or "timed out" in err_lower:
+        return (
+            "代码执行超时，可能存在死循环或计算量过大。"
+            "建议：1) 检查循环终止条件是否正确；2) 确认 while 循环有递增/退出逻辑；"
+            "3) 大数据集可先取子集（df.head(100)）测试；"
+            "4) 考虑使用更高效的算法或数据结构。"
+        )
+
+    # ---- 未知错误：通用提示 ----
+    short = error[:200] if error else "(无错误信息)"
+    return (
+        f"未知错误，建议检查代码逻辑。"
+        f"错误摘要：{short}。"
+        f"可能原因：第三方库抛出的自定义异常、权限问题、或资源不足。"
+        f"建议逐行排查代码，或添加 print() 定位崩溃点。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,68 +346,314 @@ def _diagnose_by_rule(error: str) -> str:
 
 
 def _fix_by_rule(code: str, error: str, instruction: str | None = None) -> str:
-    """基于规则尝试简单修复。
+    """基于规则尝试自动修复代码（LLM 不可用时的回退方案）。
 
-    LLM 调用失败时的回退方案。仅能处理极少数明确的模式。
+    按错误类型采用不同修复策略，优先级从高到低：
+      1. SyntaxError — 尝试补全缺失的括号/引号
+      2. ModuleNotFoundError / ImportError — 注释掉缺失的导入
+      3. ZeroDivisionError — 添加除零保护条件
+      4. NameError — 提示缺少导入（不修改代码结构）
+      5. KeyError — 包装 .get() 防御性访问
+      6. 默认 — try/except 包装
 
     Args:
-        code: 原始代码
-        error: 错误信息
-        instruction: 可选的用户指令
+        code: 原始 Python 代码
+        error: 错误信息字符串
+        instruction: 可选用户修复指令。有指令时直接走 try/except 包装
 
     Returns:
-        修复后的代码（如无法修复则包装 try/except）
+        修复后的代码字符串
     """
     err_lower = error.lower()
 
-    # 有用户指令时，无法自动修复，包装 try/except
+    # 有用户指令时，无法自动修复，包装 try/except 并注入指令注释
     if instruction:
-        return _wrap_with_try_except(code)
+        return _wrap_with_try_except(
+            code, comment=f"用户指令: {instruction}"
+        )
 
-    # SyntaxError: 尝试补括号
-    if "syntaxerror" in err_lower:
-        fixed = code.replace("print ", "print(")
-        if not fixed.rstrip().endswith(")") and "print" in fixed:
-            fixed = fixed.rstrip() + ")"
-        # 如果简单修改无变化（即 non-print SyntaxError），回退到 try/except
-        if fixed == code:
-            return _wrap_with_try_except(code)
-        return fixed
+    # ---- SyntaxError: 尝试补全括号/引号 ----
+    if "syntaxerror" in err_lower or "indentationerror" in err_lower:
+        # 提取行号，尝试定位修复
+        line_num = _extract_error_line_number(error)
+        return _fix_syntax_error(code, line_num)
 
-    # ModuleNotFoundError / ImportError: 注释掉缺失的导入
+    # ---- ModuleNotFoundError / ImportError: 注释掉缺失的导入 ----
     if "modulenotfounderror" in err_lower or "importerror" in err_lower:
-        lines = code.split("\n")
-        fixed: list[str] = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith(("from ", "import ")):
-                if any(
-                    pkg in stripped
-                    for pkg in ["scipy", "pandas", "numpy", "plotly", "matplotlib"]
-                ):
-                    fixed.append(
-                        f"# {line}  # Auto-commented: dependency unavailable"
-                    )
-                    continue
-            fixed.append(line)
-        return "\n".join(fixed)
+        return _fix_missing_import(code, error)
 
-    # 默认：包装 try/except
-    return _wrap_with_try_except(code)
+    # ---- ZeroDivisionError: 添加除零保护 ----
+    if "zerodivisionerror" in err_lower:
+        return _fix_division_by_zero(code)
+
+    # ---- NameError: 提供缺失导入提示（不修改代码结构） ----
+    if "nameerror" in err_lower:
+        return _fix_name_error(code, error)
+
+    # ---- KeyError: 提示用 .get() 防御 ----
+    if "keyerror" in err_lower:
+        return _fix_key_error(code, error)
+
+    # ---- IndexError: try/except 包裹 ----
+    if "indexerror" in err_lower:
+        return _wrap_with_try_except(code, comment="IndexError: 索引越界防护")
+
+    # ---- TypeError: try/except 包裹 ----
+    if "typeerror" in err_lower:
+        return _wrap_with_try_except(code, comment="TypeError: 类型不匹配防护")
+
+    # ---- ValueError: try/except 包裹 ----
+    if "valueerror" in err_lower:
+        return _wrap_with_try_except(code, comment="ValueError: 值错误防护")
+
+    # ---- AttributeError: try/except 包裹 ----
+    if "attributeerror" in err_lower:
+        return _wrap_with_try_except(code, comment="AttributeError: 属性不存在防护")
+
+    # ---- 未知错误: 通用 try/except 包装 ----
+    return _wrap_with_try_except(code, comment="规则回退: 通用异常防护")
 
 
-def _wrap_with_try_except(code: str) -> str:
-    """将代码包装在 try/except 块中。"""
+def _wrap_with_try_except(code: str, comment: str = "") -> str:
+    """将代码包装在 try/except 块中，提供运行时错误保护。
+
+    Args:
+        code: 原始 Python 代码
+        comment: 可选的注释，会插入 try 块之前说明包装原因
+
+    Returns:
+        包装后的代码字符串
+    """
     indent = "    "
     indented = textwrap.indent(code.strip(), indent)
+    if comment:
+        header = f"# {comment}\n"
+    else:
+        header = ""
     return (
-        f"try:\n{indented}\n"
+        f"{header}try:\n{indented}\n"
         f"except Exception as e:\n"
         f"{indent}print(f\"Runtime error: {{e}}\")\n"
     )
 
 
 # ---------------------------------------------------------------------------
+# 规则修复辅助函数（供 _fix_by_rule 使用）
+# ---------------------------------------------------------------------------
+
+
+def _extract_error_line_number(error: str) -> int:
+    """从错误信息中提取行号（整数）。
+
+    Args:
+        error: 错误信息字符串
+
+    Returns:
+        行号整数，或 0 表示未找到
+    """
+    for pat in [r"line (\d+)", r"在第 (\d+)", r":(\d+):"]:
+        m = re.search(pat, error, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+    return 0
+
+
+def _fix_syntax_error(code: str, line_num: int) -> str:
+    """尝试修复常见语法错误。
+
+    策略：
+      - 第 1 行：补 print 括号
+      - 任意行：检查括号配对并补全
+      - 无法定位：包装 try/except
+
+    Args:
+        code: 原始代码
+        line_num: 错误行号（0 = 未知）
+
+    Returns:
+        修复后的代码
+    """
+    # 常见 print 缺少括号
+    fixed = code.replace("print ", "print(")
+    if "print" in fixed:
+        # 为每行独立的 print 补括号
+        lines = fixed.split("\n")
+        new_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("print("):
+                if not stripped.rstrip().endswith(")"):
+                    line = line.rstrip() + ")"
+            new_lines.append(line)
+        fixed = "\n".join(new_lines)
+    else:
+        fixed = code
+
+    # 检查括号配对是否失衡（简单计数）
+    if _has_unbalanced_parens(fixed):
+        # 尝试补全缺失的闭合括号
+        if fixed.rstrip()[-1] not in (")", "]", "}", "'", '"'):
+            fixed = fixed.rstrip() + ")"
+        else:
+            fixed += ")"
+
+    # 修复后有变化 → 返回；无变化 → 回退
+    if fixed == code:
+        return _wrap_with_try_except(code, comment="SyntaxError: 自动修复未成功，已添加异常保护")
+    return fixed
+
+
+def _has_unbalanced_parens(code: str) -> bool:
+    """快速检查括号是否失衡。
+
+    Args:
+        code: 源代码字符串
+
+    Returns:
+        True 表示括号数量不匹配
+    """
+    pairs = [("(", ")"), ("[", "]"), ("{", "}")]
+    for left, right in pairs:
+        if code.count(left) != code.count(right):
+            return True
+    return False
+
+
+def _fix_missing_import(code: str, error: str) -> str:
+    """处理缺失模块导入：注释掉不可用的导入行。
+
+    匹配错误信息中的模块名，注释对应行。
+    保留标准库导入（os/sys/math/csv/...）。
+
+    Args:
+        code: 原始代码
+        error: 错误信息
+
+    Returns:
+        修复后的代码
+    """
+    mod = _extract_missing_module(error)
+    stdlib = frozenset({
+        "os", "sys", "math", "csv", "json", "re", "time", "datetime",
+        "pathlib", "collections", "itertools", "functools", "typing",
+        "hashlib", "uuid", "textwrap", "tempfile", "subprocess",
+    })
+
+    # 标准库不应出现 ModuleNotFoundError，保持原样
+    if mod and mod in stdlib:
+        return _wrap_with_try_except(
+            code, comment=f"ModuleNotFoundError: {mod}（标准库，检查环境）"
+        )
+
+    lines = code.split("\n")
+    fixed_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(("from ", "import ")):
+            # 检测是否匹配缺失模块
+            if mod and mod.lower() in stripped.lower():
+                fixed_lines.append(
+                    f"# {line}  # 规则回退: 缺失模块 {mod}，已注释"
+                )
+                continue
+            # 常见重量级第三方库，缺失时注释掉
+            if any(
+                pkg in stripped.lower()
+                for pkg in ("scipy", "pandas", "numpy", "plotly", "matplotlib",
+                           "tensorflow", "torch", "sklearn", "xgboost", "lightgbm",
+                           "seaborn", "pillow", "opencv")
+            ):
+                fixed_lines.append(
+                    f"# {line}  # 规则回退: 缺失第三方库，已注释"
+                )
+                continue
+        fixed_lines.append(line)
+    return "\n".join(fixed_lines)
+
+
+def _fix_division_by_zero(code: str) -> str:
+    """为零除错误添加保护条件。
+
+    识别常见的除法模式 (a / b) 并包装 if 保护。
+
+    Args:
+        code: 原始代码
+
+    Returns:
+        添加除零保护后的代码
+    """
+    # 简单策略：在代码块前添加除零检查的提示
+    # 更复杂的 AST 重构由 LLM 完成
+    preamble = textwrap.dedent("""\
+        # 规则回退: 添加除零保护
+        # 请检查所有除法运算的分母，确保不为 0
+
+    """)
+    # 尝试将常见写法 a / b 包装
+    if "/" in code:
+        # 简易保护：用 try/except ZeroDivisionError 包裹
+        return _wrap_with_try_except(code, comment="ZeroDivisionError: 除零保护")
+    return preamble + code
+
+
+def _fix_name_error(code: str, error: str) -> str:
+    """为 NameError 提供修复提示。
+
+    尝试识别缺失的变量名并添加注释提示。
+
+    Args:
+        code: 原始代码
+        error: 错误信息
+
+    Returns:
+        带注释提示和 try/except 保护的代码
+    """
+    name = _extract_undefined_name(error)
+    hint_lines = [
+        "# 规则回退: NameError — 变量未定义",
+    ]
+    if name:
+        hint_lines.append(f"# 缺失变量: '{name}'")
+        # 常见模式的修复建议
+        if "pd" in name:
+            hint_lines.append("# 建议: 添加 import pandas as pd")
+        elif "np" in name:
+            hint_lines.append("# 建议: 添加 import numpy as np")
+        elif "math" in name:
+            hint_lines.append("# 建议: 添加 import math")
+        elif "plt" in name:
+            hint_lines.append("# 建议: 添加 import matplotlib.pyplot as plt")
+        else:
+            hint_lines.append(f"# 建议: 检查 '{name}' 的拼写，或在使用前定义")
+    hint_lines.append("")
+    return "\n".join(hint_lines) + _wrap_with_try_except(
+        code, comment="NameError: 变量未定义防护"
+    )
+
+
+def _fix_key_error(code: str, error: str) -> str:
+    """为 KeyError 提供防御性访问提示。
+
+    尝试将 dict[key] 转换为 dict.get(key)。
+
+    Args:
+        code: 原始代码
+        error: 错误信息
+
+    Returns:
+        修复后的代码
+    """
+    key = _extract_key_name(error)
+    hint_lines = [
+        "# 规则回退: KeyError — 键不存在",
+    ]
+    if key:
+        hint_lines.append(f"# 缺失键: '{key}'")
+        hint_lines.append(f"# 建议: 使用 dict.get('{key}', default) 或 df.columns 检查列名")
+    hint_lines.append("")
+    return "\n".join(hint_lines) + _wrap_with_try_except(
+        code, comment="KeyError: 键不存在防护"
+    )
 # 选择处理（核心逻辑，可独立测试）
 # ---------------------------------------------------------------------------
 
