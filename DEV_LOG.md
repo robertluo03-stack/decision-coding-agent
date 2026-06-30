@@ -346,3 +346,23 @@
   - 验证 __import__('os').system('rm -rf /') 变形写法被 AST 识别并拦截
 - 验证：
   - python -m py_compile src/agent/sandbox/docker_runner.py 无报错
+
+## 2026-06-30 Debugger retry_count 逻辑审查与注释强化
+
+- 目标：审查 debugger.py 中 retry_count 累加逻辑的正确性，添加注释说明
+- 审查结果（三项全部通过）：
+  1. retry_count 递增：_process_choice 所有 4 个分支均计算 new_retry = retry_count + 1，一致正确
+  2. 上限检查：retry_count >= 2 直接返回 ABORT（不调用 LLM，不递增 retry_count），符合设计
+  3. 返回字段：所有 return 路径均包含 human_feedback + retry_count（+ generated_code 在 AI 修复分支），LangGraph partial state 合并其他字段
+- 与 graph.py 路由一致性：
+  - retry=0 → debugger 返回(无ABORT) → route_after_debugger → "code" → Coder→Executor
+  - retry=1 → debugger 返回(无ABORT) → route_after_debugger → "code" → Coder→Executor
+  - retry=2 → debugger 返回(ABORT) → route_after_debugger → "report" → Reporter
+- 注释改进：
+  - _process_choice 新增：retry_count 生命周期说明
+  - debugger_node 上限检查新增：跳过 LLM 的原因和流程注释
+  - 空指令回退新增：retry_count 来源注释
+- 测试：
+  - test_debugger.py 83/83 通过（零回归）
+  - test_graph.py 55/55 通过
+  - test_security.py 7/7 通过

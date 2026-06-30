@@ -287,9 +287,14 @@ def _process_choice(
         error_analysis: AI 分析的错误原因（用于选项 2 的上下文）
 
     Returns:
-        包含 human_feedback, retry_count 和可选的 generated_code 的字典
+        包含 human_feedback, retry_count 和可选的 generated_code 的字典。
+        LangGraph 按 partial state 合并，未返回的字段（如 error/file_path）在图中保持不变。
     """
     retry_count = state.get("retry_count", 0)
+    # 新重试次数 = 当前 + 1。与 debugger_node 入口上限检查协同：
+    #   - 当前 retry_count=0 → _process_choice 返回1，Coder→Executor→重新分析。
+    #   - 当前 retry_count=1 → _process_choice 返回2，再次出现错误后，下次进入
+    #     debugger_node 时上限检查触发直接 ABORT。
     new_retry = retry_count + 1
     error = state.get("error", "")
     code = state.get("generated_code", "")
@@ -440,6 +445,12 @@ def debugger_node(state: AgentState) -> dict:
             "generated_code":  str | None,    # 如选择了 AI 修复，返回修复后的代码
         }
 
+    retry_count 生命周期（与 graph.py 路由协同）:
+        retry=0 首次错误 → Debugger 分析 + 修复 → Coder → Executor
+        retry=1 再次错误 → Debugger 分析 + 修复 → Coder → Executor
+        retry=2 第三次错误 → Debugger 入口上限检查 → 直接 ABORT → Reporter
+        正常流程最多 2 次重试，第 3 个错误直接终止。
+
     Args:
         state: 当前 AgentState
 
@@ -460,6 +471,10 @@ def debugger_node(state: AgentState) -> dict:
     )
 
     # ---- 重试次数上限 ----
+    # 约束：根据 AgentState 设计，retry_count >= 2 时强制终止循环，
+    # 不再调用 LLM，直接返回 ABORT 进入 Reporter。
+    # 此时不递增 retry_count — 已触发上限，立即终止绕开所有 LLM 调用。
+    # flow: Executor(error) → Debugger(entry check) → Reporter(ABORT)
     if retry_count >= 2:
         logger.warning("[Debugger] 已达最大重试次数（2），自动中止")
         print(
@@ -494,7 +509,7 @@ def debugger_node(state: AgentState) -> dict:
     if result.get("human_feedback") == "NEED_INSTRUCTION":
         user_instruction = _safe_input("请输入修复指令: ")
         if not user_instruction:
-            # 空指令 → 回退到跳过
+            # 空指令 → 回退到跳过。retry_count 保持 process_choice 返回的值（已递增）。
             print("[Debugger] 未输入指令，回退为跳过")
             return {
                 "human_feedback": "SKIP",
