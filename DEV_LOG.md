@@ -328,3 +328,21 @@
   - `test_executor.py` **67/67 通过**（USE_MCP 未设置，默认 subprocess 路径，零回归）
   - `USE_MCP=true` 集成测试 **5/5 通过**（normal / dangerous / multiline / CSV read / syntax error）
   - MCP 路径 python_exec 调用耗时 ~0.1s（与 subprocess 路径相当）
+## 2026-06-30 Week2 Docker 第二道安全防线
+
+- 目标：在 DockerRunner.run() 中集成 security_checker.check_code_safety() 作为第二道安全防线
+- 背景：
+  - 第一道防线：Coder 的 _has_dangerous_code()（代码生成后立即检查）
+  - 第二道防线：DockerRunner.run() 在落地执行前兜底检查
+  - DockerRunner 能拦截 Coder 可能漏掉的变形写法（如 __import__('os').system('rm -rf /')）
+- 实现：
+  - docker_runner.py 新增 from src.agent.sandbox.security_checker import check_code_safety 导入
+  - DockerRunner.run() 入口新增步骤 0：调用 check_code_safety(code) 进行 AST 级别危险代码检查
+  - 拦截时返回 returncode=-1, stderr="Security: Dangerous code blocked by DockerRunner — ..."，不写入文件、不启动容器
+  - Coder 的 _has_dangerous_code() 保持不变（不修改第一道防线）
+- 测试：
+  - 新建 tests/test_docker_runner_security.py，11/11 通过
+  - 覆盖场景：安全代码/合法open/os.system/eval/exec/subprocess/__import__/变形写法/compile/DockerRunner集成拦截
+  - 验证 __import__('os').system('rm -rf /') 变形写法被 AST 识别并拦截
+- 验证：
+  - python -m py_compile src/agent/sandbox/docker_runner.py 无报错

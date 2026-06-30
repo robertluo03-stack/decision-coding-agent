@@ -21,6 +21,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from src.agent.sandbox.security_checker import check_code_safety
+
 
 class DockerRunner:
     """在 Docker 容器中安全执行 Python 代码。
@@ -413,6 +415,22 @@ class DockerRunner:
                 "file_path": str,    # 宿主机上临时文件的绝对路径
             }
         """
+        # ---- 0. 第二道安全防线：AST 语法级危险代码检查 ----
+        # Coder 的 _has_dangerous_code() 是第一道防线，此处是兜底。
+        # 即使 Coder 漏掉变形写法（如 __import__('os').system('...')），
+        # DockerRunner 也能在落地执行前拦截。
+        is_safe, reason = check_code_safety(code)
+        if not is_safe:
+            logger.warning(
+                "[DockerRunner] 第二道防线拦截危险代码 | reason={}", reason
+            )
+            return {
+                "stdout": "",
+                "stderr": f"Security: Dangerous code blocked by DockerRunner — {reason}",
+                "returncode": -1,
+                "file_path": "",
+            }
+
         # ---- 1. 准备宿主机目录 ----
         src_dir = self.workspace_path / "src"
         output_dir = self.workspace_path / "output"
