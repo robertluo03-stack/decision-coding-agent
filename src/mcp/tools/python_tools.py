@@ -1,7 +1,11 @@
 """Python 代码执行工具 — 基于 MCP 协议。
 
 提供沙箱化的 Python 代码执行能力。
-Week 2 版本：精确安全匹配 + 临时文件保留 + workspace_path 参数。
+Week 2 版本：精确安全匹配 + 临时文件保留 + workspace_path 参数 + Docker 沙箱支持。
+
+执行路径（由环境变量 USE_DOCKER 控制）:
+  - USE_DOCKER=false  → subprocess 直接执行（Week 1 默认方式）
+  - USE_DOCKER=true   → DockerRunner 容器沙箱执行（Docker 不可用时自动回退）
 """
 
 import os
@@ -38,6 +42,35 @@ def _get_workspace() -> Path:
     """
     raw = os.environ.get("WORKSPACE_PATH", "./workspace")
     return Path(raw).resolve()
+
+
+# ---------------------------------------------------------------------------
+# Docker 执行开关
+# ---------------------------------------------------------------------------
+
+
+def _should_use_docker() -> bool:
+    """检查是否应启用 Docker 沙箱执行。
+
+    环境变量 USE_DOCKER=true 且 Docker 守护进程可访问时启用。
+    """
+    # 检查当前进程是否处于 docker 容器内 — 容器内执行 docker run 通常是
+    # 不被允许的（DinD 需特权模式），此时跳过 Docker 路径避免无意义的尝试。
+    if _running_in_docker():
+        logger.info("[PythonTool] 当前在容器内运行，跳过 Docker 路径")
+        return False
+    return os.environ.get("USE_DOCKER", "").strip().lower() in ("true", "1", "yes")
+
+
+def _running_in_docker() -> bool:
+    """检测当前进程是否运行在 Docker 容器内。
+
+    检查 /.dockerenv 文件存在性（Docker 创建此文件标识容器环境）。
+    """
+    try:
+        return Path("/.dockerenv").exists()
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +151,191 @@ def _write_exec_file(code: str, workspace: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Docker 执行路径
+# ---------------------------------------------------------------------------
+
+
+def _execute_via_docker(
+    code: str,
+    workspace: Path,
+    timeout: int,
+) -> dict:
+    """通过 DockerRunner 容器沙箱执行 Python 代码。
+
+    工作流程：
+      1. 创建 DockerRunner 实例
+      2. 调用 run() 在隔离容器中执行
+      3. 将 DockerRunner 返回格式映射为 execute_python 统一格式
+
+    Args:
+        code: Python 源代码
+        workspace: 工作区根目录
+        timeout: 执行超时秒数
+
+    Returns:
+        {"stdout": str, "stderr": str, "success": bool, "file_path": str}
+    """
+    from src.agent.sandbox.docker_runner import DockerRunner
+
+    runner = DockerRunner(workspace_path=str(workspace))
+    result = runner.run(code, timeout=timeout)
+
+    # 映射 DockerRunner.run() 返回 → execute_python 统一格式
+    # DockerRunner 约定: returncode=0 成功，-1 基础设施错误
+    # execute_python 约定: success=True/False, stdout 空时填充 "(no output)"
+    success = result["returncode"] == 0
+    stdout = result["stdout"] or "(no output)"
+    stderr = result.get("stderr") or ""
+
+    logger.info(
+        "[PythonTool] Docker 执行完成 | success={} | stdout_len={} | stderr_len={}",
+        success,
+        len(stdout),
+        len(stderr),
+    )
+
+    return {
+        "stdout": stdout,
+        "stderr": stderr,
+        "success": success,
+        "file_path": result.get("file_path", str(workspace / "src")),
+    }
+
+
+def _execute_via_docker_with_fallback(
+    code: str,
+    workspace: Path,
+    timeout: int,
+) -> dict:
+    """尝试 Docker 执行，不可用时回退到 subprocess。
+
+    回退触发条件（任一满足即回退）:
+      - Docker 未安装（FileNotFoundError / returncode=-1 + "未安装"）
+      - Docker daemon 未运行
+      - DockerRunner 初始化失败
+
+    Args:
+        code: Python 源代码
+        workspace: 工作区根目录
+        timeout: 执行超时秒数
+
+    Returns:
+        {"stdout": str, "stderr": str, "success": bool, "file_path": str}
+    """
+    try:
+        result = _execute_via_docker(code, workspace, timeout)
+
+        # Docker 不可用 → 返回的 stderr 会包含 "Docker 未安装" 等提示
+        if result["stderr"] and (
+            "未安装" in result["stderr"]
+            or "Docker daemon" in result["stderr"]
+            or "docker 命令不可用" in result["stderr"]
+        ):
+            logger.warning(
+                "[PythonTool] Docker 不可用，回退到 subprocess | reason={}",
+                result["stderr"][:150],
+            )
+            return _execute_via_subprocess(code, workspace, timeout)
+
+        return result
+
+    except ImportError as exc:
+        # DockerRunner 模块导入失败（极端情况）
+        logger.warning("[PythonTool] DockerRunner 导入失败（{}），回退到 subprocess", exc)
+        return _execute_via_subprocess(code, workspace, timeout)
+    except Exception as exc:
+        # Docker 执行本身异常（如镜像不存在、挂载失败等）
+        logger.warning("[PythonTool] Docker 执行异常，回退到 subprocess | error={}", exc)
+        return _execute_via_subprocess(code, workspace, timeout)
+
+
+# ---------------------------------------------------------------------------
+# subprocess 执行路径（Week 1 默认，Docker 回退）
+# ---------------------------------------------------------------------------
+
+
+def _execute_via_subprocess(
+    code: str,
+    workspace: Path,
+    timeout: int,
+) -> dict:
+    """通过 subprocess 在本地执行 Python 代码（Week 1 方式）。
+
+    写入临时文件 → subprocess.run → 返回结构化结果。
+
+    Args:
+        code: Python 源代码
+        workspace: 工作区根目录
+        timeout: 执行超时秒数
+
+    Returns:
+        {"stdout": str, "stderr": str, "success": bool, "file_path": str}
+    """
+    # 写入临时文件（保留在 workspace/src/，不删除）
+    exec_path = _write_exec_file(code, workspace)
+    logger.info("[PythonTool] 代码写入临时文件 | path={}", exec_path)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(exec_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(workspace),
+            stdin=subprocess.DEVNULL,
+        )
+
+        if result.returncode == 0:
+            logger.info(
+                "[PythonTool] subprocess 执行成功 | path={} | stdout_len={}",
+                exec_path,
+                len(result.stdout or ""),
+            )
+        else:
+            logger.warning(
+                "[PythonTool] subprocess 执行失败 | path={} | returncode={} | stderr={!r}",
+                exec_path,
+                result.returncode,
+                (result.stderr or "")[:200],
+            )
+
+        return {
+            "stdout": result.stdout or "(no output)",
+            "stderr": result.stderr or "",
+            "success": result.returncode == 0,
+            "file_path": str(exec_path),
+        }
+
+    except subprocess.TimeoutExpired:
+        logger.error("[PythonTool] subprocess 执行超时（{}s）| path={}", timeout, exec_path)
+        return {
+            "stdout": "",
+            "stderr": f"Execution timed out after {timeout} seconds",
+            "success": False,
+            "file_path": str(exec_path),
+        }
+
+    except FileNotFoundError:
+        logger.error("[PythonTool] Python 解释器未找到")
+        return {
+            "stdout": "",
+            "stderr": "Python interpreter not found",
+            "success": False,
+            "file_path": str(exec_path),
+        }
+
+    except Exception as exc:
+        logger.error("[PythonTool] subprocess 执行异常 | type={} | message={}",
+                     type(exc).__name__, exc)
+        return {
+            "stdout": "",
+            "stderr": f"Execution error: {exc}",
+            "success": False,
+            "file_path": str(exec_path),
+        }
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
@@ -131,9 +349,10 @@ def execute_python(
     """在沙箱中安全执行 Python 代码。
 
     与 executor_node 保持接口兼容：
-      - 相同的安全检查（BLOCKED_PATTERNS 与 _DANGEROUS_PATTERNS 已统一）
+      - 相同的安全检查（AST 语法级分析）
       - 相同的语法预检（compile）
-      - 相同的 subprocess.run 执行模式
+      - USE_DOCKER=true 时 Docker 容器沙箱执行（自动回退）
+      - USE_DOCKER=false 时 subprocess 直接执行（Week 1 默认）
       - 临时文件保留在 workspace/src/ 下
 
     Args:
@@ -184,65 +403,10 @@ def execute_python(
             "file_path": None,
         }
 
-    # ---- 4. 写入临时文件（保留在 workspace/src/，不删除） ----
-    exec_path = _write_exec_file(code, ws)
-    logger.info("[PythonTool] 代码写入临时文件 | path={}", exec_path)
+    # ---- 4. 执行（Docker 或 subprocess） ----
+    if _should_use_docker():
+        logger.info("[PythonTool] 使用 Docker 沙箱执行 | code_len={}", len(code))
+        return _execute_via_docker_with_fallback(code, ws, timeout)
 
-    # ---- 5. subprocess 执行 ----
-    try:
-        result = subprocess.run(
-            [sys.executable, str(exec_path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(ws),
-            stdin=subprocess.DEVNULL,  # 防止子进程继承 stdio transport pipe（Windows 兼容）
-        )
-
-        if result.returncode == 0:
-            logger.info(
-                "[PythonTool] 执行成功 | path={} | stdout_len={}",
-                exec_path,
-                len(result.stdout or ""),
-            )
-        else:
-            logger.warning(
-                "[PythonTool] 执行失败 | path={} | returncode={} | stderr={!r}",
-                exec_path,
-                result.returncode,
-                (result.stderr or "")[:200],
-            )
-
-        return {
-            "stdout": result.stdout or "(no output)",
-            "stderr": result.stderr or "",
-            "success": result.returncode == 0,
-            "file_path": str(exec_path),
-        }
-
-    except subprocess.TimeoutExpired:
-        logger.error("[PythonTool] 执行超时（{}s）| path={}", timeout, exec_path)
-        return {
-            "stdout": "",
-            "stderr": f"Execution timed out after {timeout} seconds",
-            "success": False,
-            "file_path": str(exec_path),
-        }
-
-    except FileNotFoundError:
-        logger.error("[PythonTool] Python 解释器未找到")
-        return {
-            "stdout": "",
-            "stderr": "Python interpreter not found",
-            "success": False,
-            "file_path": str(exec_path),
-        }
-
-    except Exception as exc:
-        logger.error("[PythonTool] 执行异常 | type={} | message={}", type(exc).__name__, exc)
-        return {
-            "stdout": "",
-            "stderr": f"Execution error: {exc}",
-            "success": False,
-            "file_path": str(exec_path),
-        }
+    logger.info("[PythonTool] 使用 subprocess 执行 | code_len={}", len(code))
+    return _execute_via_subprocess(code, ws, timeout)
