@@ -44,7 +44,8 @@
       "Bash(python -c \"import mcp.server; print\\([x for x in dir\\(mcp.server\\) if not x.startswith\\('_'\\)]\\)\")",
       "Bash(python -c \"import mcp.types; print\\([x for x in dir\\(mcp.types\\) if not x.startswith\\('_'\\)]\\)\")",
       "Bash(python -c \"import mcp.server.stdio; print\\([x for x in dir\\(mcp.server.stdio\\) if not x.startswith\\('_'\\)]\\)\")",
-      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from src.mcp.server import create_mcp_server; print\\('Import path works'\\)\")"
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from src.mcp.server import create_mcp_server; print\\('Import path works'\\)\")",
+      "Bash(docker --version)"
     ],
     "additionalDirectories": [
       "c:\\Users\\18500\\Desktop\\Study\\agent\\decision-coder\\src\\agent\\prompts"
