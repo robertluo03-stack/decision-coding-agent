@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DecisionCoder 是一个面向经营决策与运筹优化的垂直 Coding Agent。基于 LangGraph StateGraph 编排 Plan-Code-Execute-Debug-Report 闭环，LLM 通过 DeepSeek API 调用。
 
-- **当前阶段**：已完成Week 1 骨架搭建，并且通过了E2E测试；准备进入week2开发
+- **当前阶段**：已完成Week 2，并且通过了E2E测试；准备进入week3开发
 
 ## 常用命令
 

@@ -10,6 +10,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "loguru>=0.7.0",
     "rich>=13.0.0",
+    "plotly>=5.0",
+    "duckdb>=0.10",
+    "openpyxl>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -349,9 +349,14 @@ class DockerRunner:
                         len(result.stdout or ""),
                         len(result.stderr or ""),
                     )
+                    # Detect OOM kill: returncode 137 = 128 + 9 (SIGKILL)
+                    stderr_text = result.stderr
+                    if result.returncode == 137:
+                        stderr_text = (stderr_text or "") + "\n[OOM Killed] 容器因内存超限被强制终止"
+
                     return {
                         "stdout": result.stdout,
-                        "stderr": result.stderr,
+                        "stderr": stderr_text,
                         "returncode": result.returncode,
                         "file_path": str(host_file),
                     }
@@ -362,9 +367,12 @@ class DockerRunner:
                     level_name,
                     (result.stderr or "").strip()[:200],
                 )
+                stderr_text = result.stderr
+                if result.returncode == 137:
+                    stderr_text = (stderr_text or "") + "\n[OOM Killed] 容器因内存超限被强制终止"
                 last_result = {
                     "stdout": result.stdout,
-                    "stderr": result.stderr,
+                    "stderr": stderr_text,
                     "returncode": result.returncode,
                     "file_path": str(host_file),
                 }

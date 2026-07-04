@@ -24,6 +24,16 @@ src/workspace/tests/*
 !src/workspace/data/.gitkeep
 !src/workspace/reports/.gitkeep
 !src/workspace/tests/.gitkeep
+workspace/data/*
+workspace/reports/*
+workspace/tests/*
+workspace/output/*
+workspace/src/*
+!workspace/data/.gitkeep
+!workspace/data/sales.csv
+!workspace/data/inventory.csv
+!workspace/reports/.gitkeep
+!workspace/tests/.gitkeep
 
 # OS
 Thumbs.db

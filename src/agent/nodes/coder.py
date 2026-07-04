@@ -175,13 +175,13 @@ def _generate_fallback_code(
         query = {query_safe!r}
         plan = {plan_repr!r}
 
-        print(f"原始需求: {{query}}")
+        print(f"原始需求: {query}")
         print()
 
         if plan:
             print("原执行计划:")
             for idx, step in enumerate(plan, 1):
-                print(f"  {{idx}}. {{step}}")
+                print(f"  {idx}. {step}")
         else:
             print("提示: 未能生成有效的执行计划。")
             print("请检查: 1) 需求是否清晰  2) 数据文件是否存在  3) API Key 是否有效")

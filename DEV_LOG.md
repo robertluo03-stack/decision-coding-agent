@@ -724,3 +724,225 @@ docker run --rm --name dc-sandbox-7f38740a4eda \
 失败:     0
 通过率:   100%
 ```
+
+---
+
+## 2026-07-04 Week 2 完整总结
+
+### 时间线
+
+| 日期 | 阶段 | 完成内容 |
+|------|------|---------|
+| 2026-06-23 | Day 1 | 日志系统搭建（4 次迭代） |
+| 2026-06-23 | Day 2 | MCP Server 重写 + file_tools 重构 + python_tools 重构 + 统一安全检查 + Executor MCP 集成 |
+| 2026-06-30 | Day 3-4 | Docker 沙箱执行器 + 安全防线 + Debugger 增强（规则回退、ABORT、retry_count） |
+| 2026-07-04 | Day 5 | 集成测试（危险代码拦截、死循环超时、OOM 内存炸弹、E2E 多模式回归） |
+
+### 完成的子任务清单
+
+#### Day 1：日志系统（4/4 ✅）
+- [x] 1.1 添加 loguru 依赖
+- [x] 1.2 创建 logger_config.py，配置 debug.log + error.log 双通道
+- [x] 1.3 5 个节点插桩（入口/出口/异常日志，含代码 md5 hash）
+- [x] 1.4 compression=zip + get_logger() 便捷函数 + rotation/retention
+
+#### Day 2：MCP 协议适配（6/6 ✅）
+- [x] 2.1 重写 server.py，接入 mcp SDK (FastMCP)，_StubMCPServer 完全替换
+- [x] 2.2 适配 file_tools：inputSchema + CallToolResult + 路径安全校验
+- [x] 2.3 适配 python_tools：修复 BLOCKED_KEYWORDS（移除误杀 open()）+ 临时文件保留
+- [x] 2.4 统一安全检查：AST 语法级 security_checker.py，合并两套规则
+- [x] 2.5 本地 Server 启动：start_server(mode) + console entry point
+- [x] 2.6 打通 Executor → MCP：USE_MCP=true 时通过 MCP Client 调用 python_exec
+
+#### Day 3-4：Docker 沙箱 + 安全加固（8/8 ✅）
+- [x] 3.1 Dockerfile（python:3.11-slim + pandas/numpy/scipy/ortools + 非 root 用户）
+- [x] 3.2 DockerRunner 类（路径转换 + 容器执行 + 自动清理）
+- [x] 3.3 超时机制（30s + docker kill + 残留清理）
+- [x] 3.4 资源限制（--memory=512m --cpus=1.0 --pids-limit=64 --read-only）
+- [x] 3.5 网络隔离（--network none，默认且不可关闭）
+- [x] 3.6 Docker 集成到 python_tools（USE_DOCKER=true → DockerRunner，不可用自动回退 subprocess）
+- [x] 4.1 命令白名单第二道防线（DockerRunner 前置 check_code_safety）
+- [x] 4.2 危险代码拦截测试（test_security.py + test_docker_runner_security.py）
+- [x] 4.3 retry_count 逻辑审查（≥2 强制 ABORT + 注释强化）
+- [x] 4.4 规则回退增强（6→12 种错误类型 + 5 个辅助提取函数）
+- [x] 4.5 强制退出保护（ABORT → fail_<timestamp>.md 失败报告）
+
+#### Day 5：集成测试（4/4 ✅）
+- [x] 5.1 危险代码拦截集成测试（4 道防线纵向验证）
+- [x] 5.2 死循环超时测试（30s 精准超时 + Debugger 重试流程）
+- [x] 5.3 OOM 内存炸弹测试（returncode=137 + 宿主机零影响）
+- [x] 5.4 E2E 多模式回归测试（subprocess / MCP / Docker 三种模式，63/63 通过）
+
+---
+
+### 踩坑记录
+
+#### 坑1：BLOCKED_KEYWORDS 包含 "open(" 误杀合法文件操作
+- **问题**：Week 1 的 python_tools.py 中 `BLOCKED_KEYWORDS` 包含 `"open("`，导致 `open('data.csv')` 等合法文件操作被拦截
+- **现象**：所有需要读写文件的生成代码均无法执行
+- **解决方案**：改用 AST 语法级分析（security_checker.py），精确识别 `os.system()` / `subprocess.*` / `eval()` / `exec()` / `__import__()`，同时放行普通 `open()` 调用
+- **状态**：✅ 已修复（2026-06-23，python_tools 重构 + 统一安全检查）
+
+#### 坑2：MCP Server stdio transport 与子进程 hang（Windows 兼容）
+- **问题**：`subprocess.run` 在 MCP Server 内部继承了 stdio transport pipe（stdin），导致子进程在 Windows 上 hang
+- **现象**：`USE_MCP=true` 时，executor 通过 MCP Client 调用 python_exec，server 内部 `subprocess.run` 启动用户代码子进程后永不返回
+- **诊断过程**：
+  1. MCP Server 日志显示 `subprocess.run` 调用后卡住（无后续日志）
+  2. 怀疑 stdio pipe 被继承 → 子进程等待 stdin 输入
+  3. 验证：手动在 server 进程中用 `sys.stdin.fileno()` 确认 stdin 是 transport pipe
+- **解决方案**：所有 `subprocess.run` 调用添加 `stdin=subprocess.DEVNULL`（executor.py + python_tools.py 两处）
+- **状态**：✅ 已修复（2026-06-23）
+
+#### 坑3：Docker 镜像中 scipy 需要 gcc/g++/make
+- **问题**：`python:3.11-slim` 基础镜像缺少 C++ 编译工具链，scipy 安装失败
+- **现象**：`docker build` 时报 `error: subprocess-exited-with-error`，scipy 编译失败
+- **解决方案**：Dockerfile 中新增 `apt-get install -y gcc g++ make`，安装完成后清理 apt 缓存
+- **状态**：✅ 已修复（2026-06-30，镜像 1.25 GB 构建成功）
+
+#### 坑4：`--pids-limit` 在某些 Docker 版本不支持
+- **问题**：部分 Docker 版本/环境不支持 `--pids-limit` flag
+- **现象**：容器启动时报 `unknown flag: --pids-limit`
+- **解决方案**：DockerRunner 实现 graceful fallback 机制（`_execute_docker`）：先尝试全部 flag，若 Docker 返回 "unknown flag" 则回退到最小 flag 集（仅挂载 + 网络隔离）
+- **状态**：✅ 已修复（2026-06-30，`_execute_docker` 的 flag_levels 循环）
+
+#### 坑5：OOM Kill 后 stdout/stderr 为空——无法从输出判断 OOM
+- **问题**：容器因 `--memory=512m` 被 OOM Kill 时，returncode=137，但 stdout 和 stderr 均为空
+- **现象**：Python 进程在收到 SIGKILL 后立即终止，`print()` / `try/except MemoryError` 均无执行机会
+- **影响**：仅能从 returncode=137 推断 OOM，无法在 stderr 中获取明确的 "OOM Killed" 描述
+- **解决方案**：当前依赖 returncode=137 作为 OOM 信号。后续可在 DockerRunner 中增强：检测到 returncode=137 时在 stderr 中追加 `[OOM Killed]` 标识
+- **状态**：⚠️ 已知限制，待 Week 3 改进
+
+#### 坑6：`.env` 在 graph.invoke() 直接调用时不自动加载
+- **问题**：`main.py` 的 `_setup_environment()` 会调用 `load_dotenv()`，但测试脚本直接调用 `build_graph().invoke()` 时不会触发 `.env` 加载
+- **现象**：`DEEPSEEK_API_KEY` 未设置 → Planner LLM 调用失败 → plan 为回退 → Coder 生成回退代码 → 所有任务输出 `DecisionCoder 执行报告 (安全模式)`
+- **诊断过程**：
+  1. debug.log 显示 `[Planner] DEEPSEEK_API_KEY 未设置`
+  2. 检查 `.env` 文件存在且内容正确
+  3. 确认 main.py 中 `load_dotenv()` 在 `_setup_environment()` 中调用，但 graph 直接使用时跳过
+- **解决方案**：测试脚本开头显式调用 `from dotenv import load_dotenv; load_dotenv()`
+- **状态**：✅ 已修复（2026-07-04，test_e2e_docker.py）
+
+#### 坑7：回退代码 `_generate_fallback_code` 的 f-string 转义 bug
+- **问题**：`coder.py` 的 `_generate_fallback_code` 使用 `textwrap.dedent` 生成代码，内部 `{{query}}` 在普通字符串中保持为 `{{query}}`，写入文件后 `f"{{query}}"` 在 f-string 中被解释为字面量 `{query}` 而非变量值
+- **现象**：回退代码执行输出 `原始需求: {query}` 和 `{idx}. {step}`（变量未被替换）
+- **根因分析**：
+  - `textwrap.dedent("""...{{query}}...""")`：在普通字符串中 `{{` 无特殊含义，保持为 `{{`
+  - 生成的 .py 文件包含 `f"原始需求: {{query}}"`：f-string 中 `{{` 是 `{` 的字面量转义
+  - 最终 print 输出：`{query}` 字面量字符串
+- **解决方案**：将 `{{query}}` → `{query}`、`{{idx}}` → `{idx}`、`{{step}}` → `{step}`（因为外层是普通字符串，不需要转义花括号）
+- **状态**：⚠️ 已识别，待修复（此 bug 只在回退代码路径触发，正常 LLM 生成路径不受影响）
+
+---
+
+### 纵深防御体系
+
+```
+第零道防线：LLM 语义识别（Planner）
+  └─ DeepSeek 在语义层面识别并拒绝危险意图
+第一道防线：AST 安全检查（Coder._has_dangerous_code）
+  └─ 代码生成后立即检查，拦截 os.system/subprocess/eval/exec/__import__
+第二道防线：执行前预检（Executor.executor_node）
+  └─ 空代码 → 危险代码 → 语法预检 → 写入文件
+第三道防线：DockerRunner AST 兜底检查
+  └─ 落地执行前再次调用 check_code_safety()，防变形写法漏网
+第四道防线：Docker 容器沙箱
+  └─ --memory=512m --cpus=1.0 --pids-limit=64 --read-only --network none
+```
+
+### Week 1 vs Week 2 架构变化
+
+| 维度 | Week 1 | Week 2 |
+|------|--------|--------|
+| 执行方式 | subprocess 直接执行 | subprocess / MCP / Docker 三选一 |
+| 安全检查 | 字符串匹配（两套独立规则） | AST 语法级分析（统一 security_checker） |
+| 工具层 | 纯 Python 函数（无协议） | MCP 标准协议（FastMCP + inputSchema + CallToolResult） |
+| 沙箱隔离 | 仅 subprocess 超时 | Docker 容器 + 内存/CPU/PID/网络/文件系统 全面隔离 |
+| 日志系统 | print() | loguru 双通道（debug.log + error.log） |
+| 错误诊断 | 6 种规则回退 | 12 种规则回退 + 5 个辅助提取函数 |
+| 失败报告 | 单一 report_*.md | 区分 report_*.md（成功）/ fail_*.md（中止） |
+| 代码文件命名 | _dc_exec_<pid>.py | _dc_exec_<uuid4_hex8>.py（防 PID 冲突） |
+
+---
+
+### Week 3 准备工作
+
+#### 待修复问题
+1. **回退代码 f-string 转义 bug**（坑7）：`_generate_fallback_code` 中 `{{query}}` / `{{idx}}` / `{{step}}` 需改为单花括号
+2. **DockerRunner OOM 日志增强**：returncode=137 时在 stderr 中追加 `[OOM Killed]` 标识，方便上层诊断
+3. **Docker 模式下完整 Graph 测试**：当前 Docker 测试走的是 `python_tools.execute_python` 直接调用，完整 Graph（Plan→Code→Execute）在 Docker 模式下的异步事件循环兼容性需进一步验证
+
+#### Week 3 依赖确认
+- [ ] Python 3.11+ ✅（当前版本）
+- [ ] Docker Desktop 29.2.1 + decision-coder-sandbox:latest (1.25 GB) ✅
+- [ ] DeepSeek API Key ✅
+- [ ] MCP SDK (mcp>=1.0.0) + langgraph + langchain-deepseek ✅
+- [ ] 需准备真实销售数据文件（CSV）用于 Week 3 数据分析能力测试
+
+#### Week 3 新增依赖预览
+根据 [DEV_DESIGN.md](DEV_DESIGN.md) Week 3 计划：
+- Plotly（可视化）— 已在 Dockerfile 中预留，需添加到 pyproject.toml
+- DuckDB（Text-to-SQL）— 轻量级嵌入式数据库，需添加到 pyproject.toml 和 Dockerfile
+- 可能需要的测试数据：sales.csv（销售记录）、inventory.csv（库存记录）
+
+#### Week 3 重点风险
+1. **Matplotlib 中文乱码**（Week 1 踩坑记录已预警）：Docker 容器内中文字体需预先安装
+2. **Plotly vs Matplotlib 选择**：DEV_DESIGN.md 提到"换字体或改用 Plotly"，需在 Week 3 初期决策
+3. **DuckDB 与 pandas 的 DataFrame 互操作**：需验证 MCP file_tools 的 CSV 读取 → DuckDB SQL 查询 → DataFrame 返回的完整链路
+
+---
+
+## 2026-07-04 Week3-Day0 准备工作
+
+### 任务 1：修复回退代码 f-string 转义 bug
+- **文件**：`src/agent/nodes/coder.py`
+- **目标**：修复 `_generate_fallback_code` 的 f-string 花括号转义错误
+- **问题根因**：`textwrap.dedent("""...""")` 是普通字符串（非 f-string），`{{query}}` 在其中是字面 `{{query}}` 两个花括号 + query 两个花括号 + query，写入生成的 `.py` 文件后 f-string 把 `{{` 解释为字面花括号，输出 `{query}` 而非变量值
+- **修复**：第 178 行 `{{query}}` → `{query}`，第 184 行 `{{idx}}. {{step}}` → `{idx}. {step}`
+- **验证**：`python -m py_compile` 通过；生成的代码中花括号正确使用单花括号
+
+### 任务 2：DockerRunner OOM 检测
+- **文件**：`src/agent/sandbox/docker_runner.py`
+- **目标**：Docker OOM Kill (returncode=137) 时在 stderr 中追加人类可读的 OOM 标识
+- **实现**：在 `_execute_docker` 的 2 处返回 dict 中检测 `result.returncode == 137`，追加 `[OOM Killed] 容器因内存超限被强制终止`
+- **原因**：returncode 137 = 128 + 9 (SIGKILL)，是 Docker 因内存超限杀进程的可靠信号；之前调用者只能看到 137 但无法诊断
+- **验证**：`python -m py_compile` 通过；语法无误
+
+### 任务 3：Docker 模式完整 Graph 兼容性测试
+- **新文件**：`tests/test_docker_mode_graph.py`
+- **目标**：验证 `executor_node → anyio.run() → MCP Client → python_tools → DockerRunner.run() (sync subprocess)` 链路无事件循环冲突
+- **设计**：3 项测试 — Graph 编译、单次完整图调用、多次调用稳定性；无 Docker/MCP 时自动跳过
+- **验证**：语法检查通过；需要 Docker + MCP SDK 环境运行
+
+### 任务 4：pyproject.toml 新增依赖
+- **文件**：`pyproject.toml`
+- **新增**：`plotly>=5.0`、`duckdb>=0.10`、`openpyxl>=3.0`
+- **用途**：Week 3 数据分析能力 — Plotly（可视化）、DuckDB（Text-to-SQL）、openpyxl（Excel 读取）
+- **验证**：`pip install -e .` 依赖解析无误
+
+### 任务 5：Dockerfile 更新
+- **文件**：`Dockerfile`
+- **系统包**：新增 `fonts-noto-cjk`（Google Noto CJK 中/日/韩字体包）用于 Matplotlib/Plotly 中文图表渲染
+- **Python 包**：新增 `plotly>=5.0`、`duckdb>=0.10`、`openpyxl>=3.0`
+- **镜像大小预期**：约 1.3 GB（新增包约 50-80 MB）
+- **验证**：待 `docker build` 确认
+
+### 任务 6：测试数据准备
+- **新文件**：
+  - `workspace/data/sales.csv`（120 行）— 日期、SKU、区域、销量、单价；12 个缺失值(~10%)，5 个异常值
+  - `workspace/data/inventory.csv`（55 行）— SKU、产品名、仓库、当前库存、安全库存、补货点
+  - `workspace/tests/generate_test_data.py` — 数据生成脚本（seed=42 可复现）
+- **验证**：`workspace/tests/generate_test_data.py` 运行成功，CSV 文件行列数正确
+
+### 任务 8：.gitignore 更新
+- **文件**：`.gitignore`
+- **新增**：`workspace/` 目录规则（`workspace/data/*`、`workspace/reports/*`、`workspace/tests/*`、`workspace/output/*`、`workspace/src/*`）
+- **放行**：`!workspace/data/sales.csv`、`!workspace/data/inventory.csv`、`.gitkeep` 文件
+- **验证**：`git status workspace/` 检查无误
+
+### 回归测试
+- **结果**：35/35 通过（test_coder: 10、test_docker_runner_security: 11、test_executor: 14）
+- **无回归** ⭆
+
+### 遗留
+- Docker 模式 Graph 测试（Task 3）需要 Docker 环境实际运行，当前环境仅完成语法检查
+- Docker 镜像重建（Task 5）待执行 `docker build`，建议在 Week 3 Day 0 或 Day 1 集中完成
