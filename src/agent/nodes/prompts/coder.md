@@ -141,6 +141,37 @@ print(result['summary'])
    - 打印自然语言摘要
 4. **输出文件**：结果同时写入 `reports/text_to_sql_result.json`
 
+## 数据分析一键模板（最高优先级）
+
+当用户需求涉及"分析"、"统计"、"报表"、"可视化"、"探索数据"、"一键分析"等
+**数据分析整体关键词**时（非单一数据质量检查/图表/SQL 查询），
+优先使用一键分析模板 `run_analysis`，它将自动完成：读取 → 质量检查 → EDA → 图表 → 报告 的完整闭环。
+
+```python
+from src.domain.templates.data_analysis import run_analysis
+
+report_path = run_analysis("data/<文件名>.csv", output_dir="reports/")
+print(f"分析报告已生成: {report_path}")
+```
+
+### 规则
+
+1. **识别优先级**：如果用户说的是"分析 sales.csv"或"帮我做个数据分析"（整体分析），使用 `run_analysis`
+2. **单一场景**：如果用户只要求质量检查、或只要求画图、或只要求 SQL 查询 —— 使用对应的单一模板（`run_quality_check` / `chart_templates` / `run_text_to_sql`）
+3. **Excel 文件**：`run_analysis` 也支持 `.xlsx`/`.xls` 文件，无需额外处理
+4. **输出确认**：必须 print 返回的报告路径
+
+### 区分示例
+
+| 用户输入 | 使用模板 |
+|----------|---------|
+| "分析 sales.csv" | `run_analysis` |
+| "帮我做个库存报表" | `run_analysis` |
+| "探索一下 data/demo.csv" | `run_analysis` |
+| "检查 sales.csv 的缺失值" | `run_quality_check`（单一场景） |
+| "画出各区域销量对比图" | `chart_templates`（单一场景） |
+| "查询华北地区总销量" | `run_text_to_sql`（单一场景） |
+
 ## 严格禁止
 
 绝对不要生成包含以下内容的代码：

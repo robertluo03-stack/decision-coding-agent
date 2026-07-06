@@ -1,3 +1,71 @@
+## 2026-07-06 Week3-Day6 数据分析领域模板（一键分析）
+
+- 目标：将 Day 2-5 的数据能力封装为 `run_analysis` 一键分析模板，实现从数据读取到完整 Markdown 报告的闭环
+- 新增文件：
+  - `src/domain/templates/data_analysis.py` — 一键数据分析引擎
+    - `run_analysis(file_path, output_dir, target_columns, time_column)` — 主入口，返回报告路径
+    - `_compute_eda_summary(df)` — EDA 统计摘要（数值列 describe + 类别列 unique_count/mode）
+    - `_generate_conclusions(quality_report, eda_summary)` — 规则化结论生成（7 类 if-else 规则，不依赖 LLM）
+    - `_detect_time_column(df)` — 时间列自动检测（列名 → dtype → 字符串解析 三级回退）
+    - `_detect_category_column(df)` — 最优类别列检测（2-20 唯一值的低基数字符串列）
+    - `_detect_value_column(df)` — 最优数值列检测（关键词匹配 → 回退第一数值列）
+    - `_build_analysis_report(...)` — Markdown 报告构建（5 章节标准化结构）
+  - `tests/test_data_analysis_template.py` — 19 个测试场景全覆盖
+- 修改文件：
+  - `src/agent/nodes/prompts/planner.md` — 新增"分析 sales.csv"一键分析示例（4 步骤）
+  - `src/agent/nodes/prompts/coder.md` — 新增"数据分析一键模板"段落（最高优先级）：
+    - 整体分析关键词 → `run_analysis` 调用（读取 → 质量检查 → EDA → 图表 → 报告）
+    - 单一场景关键词 → 对应单一模板（避免过度使用）
+    - 区分示例表：分析 vs 质量检查 vs 图表 vs SQL
+- 实现要点：
+  - **内部流水线**（7 步）：
+    1. 读取 CSV/Excel（`pd.read_csv` / `pd.read_excel`）
+    2. `run_quality_check(df)` — 数据质量报告
+    3. `_compute_eda_summary(df)` — 统计摘要（数值列 describe + 类别列概况）
+    4. 自动生成 2 张图表（折线图 + 柱状图），图表生成失败不阻断
+    5. `_generate_conclusions(...)` — 规则化结论（评分/缺失/异常值/重复/CV/高基数类别）
+    6. `_build_analysis_report(...)` — 5 章节 Markdown：概览 → 质量 → 统计 → 图表 → 结论
+    7. 写入 `reports/analysis_YYYYMMDD_HHMMSS.md`
+  - **结论规则引擎**（7 条规则，不调用 LLM）：
+    - 评分 ≥90 → ✅ 数据良好 / 70-89 → ⚠️ 建议清洗 / <70 → ❌ 建议先清洗
+    - 高缺失列 → 建议评估后保留或删除
+    - 异常值 → 汇总数量，建议核查
+    - 重复率 >5% → 建议去重
+    - 变异系数（CV）>1.0 → 建议分组分析
+    - 类别列唯一值 >20 → 建议聚焦 Top 10
+    - 兜底 → 数据基本正常
+  - **时间列检测**：列名（date/time/日期）→ dtype（datetime64）→ 尝试 pd.to_datetime 解析前 5 个非空值
+  - **类别列检测**：非数值列 + 唯一值 2-20 → 取唯一值最多的列
+  - **数值列检测**：关键词（销量/收入/金额/volume/price/sales/qty/...）→ 回退第一数值列
+  - **图表生成**：`try/except` 包裹，失败不阻断（保留容错）
+  - **报告 Markdown 表格**：手动构建（避免 `to_markdown()` 引入 `tabulate` 依赖）
+- 与 Coder 集成：
+  - 在 `coder.md` 中识别"分析"、"报表"、"探索"、"一键分析"等关键词 → 生成 `run_analysis` 调用
+  - 单一场景（质量检查/图表/SQL）不改用一键模板，保持精度
+  - 生成的代码极简（3 行），清晰展示模板调用意图
+- 测试覆盖：
+  - 黄金路径（完整分析 + 报告 + 图表） ✅
+  - 数据质量差（大量缺失 → 警告结论 + 修复建议） ✅
+  - 空 DataFrame → 不崩溃 ✅
+  - 纯数值列 → 不生成类别图表但不崩溃 ✅
+  - 中文列名 ✅
+  - 时间列自动检测（英文名/中文名/无时间列） ✅
+  - 类别列自动检测（低基数/纯数值无类别） ✅
+  - 数值列自动检测（关键词优先/回退第一数值列） ✅
+  - EDA 统计计算正确性（数值 stats + 类别 unique_count） ✅
+  - 结论生成（高质量 + 低质量两种场景） ✅
+  - 图表文件实际生成验证 ✅
+  - `_build_analysis_report` 结构完整性 ✅
+  - 不支持的文件格式 → ValueError ✅
+  - **19/19 通过**
+- 验证：
+  - `python -m py_compile src/domain/templates/data_analysis.py` ✅
+  - `python -m pytest tests/test_data_analysis_template.py -v` 19/19 通过 ✅
+  - 全部回归测试 207/207 通过（零回归，较上次 +19） ✅
+- 踩坑记录：
+  1. **pandas `to_markdown()` 依赖 `tabulate` 包**：`df.head().to_markdown()` 在 pandas 3.0 中需要 `tabulate` 库（非预装）。改为手动构建 Markdown 表格（遍历列+行），消除额外依赖。
+  2. **结论规则无需 LLM**：业务场景的结论逻辑清晰（评分/缺失/异常值/CV），if-else 规则不仅零延迟、零 API 开销，而且输出完全一致可预测，适合生产环境。
+
 ## 2026-07-06 Week3-Day3 Text-to-SQL 自然语言问数模块
 
 - 目标：实现 Text-to-SQL 引擎，用户用自然语言提问，Agent 自动生成 DuckDB SQL 并执行
