@@ -1,3 +1,82 @@
+## 2026-07-06 Week3-Day3 Text-to-SQL 自然语言问数模块
+
+- 目标：实现 Text-to-SQL 引擎，用户用自然语言提问，Agent 自动生成 DuckDB SQL 并执行
+- 新增文件：
+  - `src/domain/text_to_sql.py` — 核心引擎
+    - `run_text_to_sql(query, csv_path, output_dir)` — 主入口，完整 NL→SQL→Execute→Summary 流水线
+    - `extract_schema(csv_path, table_name)` — 从 CSV 前 100 行提取列名和推断类型，生成 DuckDB CREATE TABLE DDL
+    - `_infer_dtype(series)` — pandas dtype → DuckDB SQL 类型映射（INTEGER/BIGINT/DOUBLE/DATE/VARCHAR/BOOLEAN）
+    - `_build_sql_prompt(question, schema_ddl, table_name)` — LLM Text-to-SQL Prompt 构建（含结构约束、安全规则）
+    - `check_sql_safety(sql)` — SQL 安全检查（仅允许 SELECT，拦截 DROP/DELETE/UPDATE/INSERT/ALTER/CREATE/TRUNCATE/EXEC/PRAGMA/ATTACH）
+    - `_call_llm_for_sql(prompt_text)` — DeepSeek API 调用（temperature=0.1 提高 SQL 正确率）
+    - `_clean_sql(raw_sql)` — 清理 Markdown 代码块包装和多余空白
+    - `_execute_sql(sql, csv_path, table_name)` — DuckDB 内存模式执行（read_csv_auto + VIEW）
+    - `_generate_summary(question, sql, df)` — 模板化自然语言摘要生成（不调用 LLM）
+    - `_write_result(...)` — 结果写入 `text_to_sql_result.json`
+  - `tests/test_text_to_sql.py` — 30 个测试场景全覆盖
+- 修改文件：
+  - `src/domain/__init__.py` — 新增 `run_text_to_sql` 导出
+  - `src/agent/nodes/prompts/coder.md` — 新增 "Text-to-SQL 模板" 段落：
+    - 可用库新增 `duckdb`
+    - 当需求涉及"查询"/"问数"/"自然语言查询"/"用 SQL"/"统计一下"时生成 `run_text_to_sql` 调用代码
+    - 生成的代码模板包含完整的结果展示逻辑（SQL + 行数 + 逐行打印 + 摘要）
+  - `src/agent/nodes/debugger.py` — 新增 2 类 DuckDB 规则分类：
+    - `CatalogException / BinderException` → "表或列不存在，建议检查列名拼写 + DESCRIBE"
+    - `ParserException` → "DuckDB SQL 语法错误，建议检查关键字拼写和 DuckDB 方言"
+- 实现要点：
+  - **Schema 提取**：
+    - `pd.read_csv(nrows=100)` → 每列 `_infer_dtype()` → 生成 `CREATE TABLE data (...)` DDL
+    - 日期列识别：列名含 `date`/`time`/`日期` 或 dtype 为 datetime
+    - 中文列名用双引号包裹（DuckDB 兼容）：`"日期" DATE`
+    - 大整数防溢出：值超过 2^31 自动升级为 `BIGINT`
+  - **SQL 生成**：
+    - System Prompt 设定"只输出 SELECT 语句"+"DuckDB 兼容"
+    - 列名用双引号包裹保留中文
+    - temperature=0.1 提高生成准确率
+  - **安全检查**：11 种危险关键字正则匹配（DROP/DELETE/UPDATE/INSERT/ALTER/CREATE/TRUNCATE/EXEC/EXECUTE/PRAGMA/ATTACH/DETACH），非 SELECT 开头的查询也被拦截
+  - **DuckDB 执行**：
+    - 内存模式（`duckdb.connect()`），无持久化写入
+    - `read_csv_auto` 自动推断类型创建 VIEW
+    - 返回 pandas DataFrame 用于后续展示
+  - **摘要生成**：模板化（不额外调用 LLM），单行逐列展示值，多行展示前 5 行 + 总行数
+  - **输出**：结果写入 `reports/text_to_sql_result.json`（JSON，UTF-8）
+- 测试覆盖：
+  - `_infer_dtype`：整数 → INTEGER、浮点 → DOUBLE、字符串 → VARCHAR、日期 → DATE ✅
+  - `extract_schema`：英文列名 DDL、中文列名 DDL 双引号包裹 ✅
+  - `check_sql_safety`：合法 SELECT 通过、DROP/DELETE/UPDATE/INSERT/ALTER 拦截、非 SELECT 前缀拦截、9 种合法 SQL 模式不误杀 ✅
+  - `_clean_sql`：```sql 包装去除、``` 通用包装去除、末尾分号去除 ✅
+  - `_execute_sql`：基本 SELECT、GROUP BY + AVG 聚合 ✅
+  - DuckDB 错误：列不存在 → `BinderException`、SQL 语法错误 → `ParserException` ✅
+  - `_generate_summary`：多行（行数+前几行）、单行（逐列值）、空结果（未返回） ✅
+  - `_build_sql_prompt`：包含 DDL + 问题 + 安全约束 ✅
+  - 端到端（mock LLM）：完整流程 → 结果正确 + JSON 文件写入 ✅
+  - 危险 SQL 端到端拦截：mock LLM 返回 DROP TABLE → `ValueError` ✅
+  - 中文列名 DuckDB 兼容：中文列名 CSV 正确查询 ✅
+  - 空 CSV（仅表头）：不崩溃，返回 0 行 ✅
+  - **30/30 通过**
+- 验收对照：
+
+| 验收项 | 状态 | 说明 |
+|--------|------|------|
+| py_compile 全部通过 | ✅ | text_to_sql.py / __init__.py / debugger.py 无报错 |
+| test_text_to_sql.py 30 项全部通过 | ✅ | 4 类型推断 + 2 Schema + 9 安全 + 3 清理 + 2 执行 + 2 SQL 错误 + 3 摘要 + 1 Prompt + 2 端到端 + 1 危险拦截 + 1 中文列名 |
+| 全部回归测试 188/188 通过 | ✅ | 原有 Week 1/2/3 测试零回归 |
+| 危险 SQL 拦截 | ✅ | DROP/DELETE/UPDATE/INSERT/ALTER 全部拦截 |
+| 列不存在错误（Debugger） | ✅ | BinderException 被规则分类识别 |
+| SQL 语法错误（Debugger） | ✅ | ParserException 被规则分类识别 |
+| 中文列名兼容 | ✅ | DuckDB 双引号包裹中文列名正确可用 |
+| >8 个测试场景 | ✅ | 30 个场景全覆盖 |
+
+- 技术要点：
+  - DuckDB `read_csv_auto` 自动推断类型（header + 类型推断一步完成）
+  - DuckDB 错误类型分三层：`CatalogException`（表不存在）、`BinderException`（列不存在）、`ParserException`（SQL 语法）
+  - SQL 不安全检测分类为 `ValueError`（Python 异常），不传回 DuckDB 层（LLM 生成的恶意 SQL 在 DuckDB 执行前拦截）
+  - DeepSeek temperature=0.1 提高 SQL 生成一致性和正确率
+
+- 踩坑记录：
+  1. **DuckDB 列不存在抛 BinderException 而非 CatalogException**：`CatalogException` 用于表不存在，`BinderException` 用于列不存在（Binder 阶段绑定列名失败）。Debugger 规则分类和测试断言需同时覆盖两者。
+  2. **中文列名需双引号包裹**：DuckDB 中 `"日期"` 保留原始大小写和中文，单引号是字符串字面量。`extract_schema` 统一使用 `f'"{col}"'` 包裹所有列名。
+
 ## 2026-07-06 Week3-Day3 图表可视化模块（Plotly）
 
 - 目标：实现 5 种 Plotly 交互式图表模板，解决 Matplotlib 中文乱码问题，统一使用 Plotly 生成 HTML 图表

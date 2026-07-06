@@ -321,6 +321,24 @@ def _diagnose_by_rule(error: str) -> str:
             "3) 用 os.path.exists(path) 检查文件是否存在再读取。"
         )
 
+    # ---- DuckDB CatalogException / BinderException: 表/列不存在 ----
+    if "catalogexception" in err_lower or "binderexception" in err_lower:
+        return (
+            "DuckDB 表或列不存在。"
+            "建议：1) 检查列名拼写和大小写（如 'sku' vs 'SKU'）；"
+            "2) 先用 DESCRIBE 或 SELECT * LIMIT 1 查看可用列；"
+            "3) 确认表名和视图名是否正确。"
+        )
+
+    # ---- DuckDB ParserException: SQL 语法错误 ----
+    if "parserexception" in err_lower:
+        return (
+            "DuckDB SQL 语法错误。"
+            "建议：1) 检查 SQL 关键字拼写（如 SELECT / FROM / WHERE / GROUP BY）；"
+            "2) 确认日期函数使用 DuckDB 兼容语法（如 EXTRACT(YEAR FROM col)）；"
+            "3) 检查字符串引号是否配对。"
+        )
+
     # ---- Timeout: 执行超时 ----
     if "timeout" in err_lower or "timed out" in err_lower:
         return (

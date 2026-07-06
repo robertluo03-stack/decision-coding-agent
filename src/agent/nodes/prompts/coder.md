@@ -3,7 +3,7 @@
 ## 环境约束
 
 - Python 3.11+
-- 可用库：标准库 + pandas + numpy + matplotlib + plotly（均已安装）
+- 可用库：标准库 + pandas + numpy + matplotlib + plotly + duckdb（均已安装）
 - 数据文件在 ./data/ 目录下，使用相对路径读取（如 `data/sales.csv`）
 - 输出使用 print()，不使用 logging 模块
 - 代码必须自包含，包含所有需要的 import 语句
@@ -104,6 +104,42 @@ print("图表已保存到 reports/charts/monthly_sales.html")
    - 热力图自动选取数值列，无需手动处理
 
 4. **输出确认**：图表函数返回输出路径，必须 print 该路径告知用户
+
+## Text-to-SQL 模板（重要）
+
+当用户需求涉及"查询"、"问数"、"自然语言查询"、"用 SQL"、"统计一下"等自然语言问数关键词时，
+必须生成调用 `run_text_to_sql` 的代码，使用以下模板：
+
+```python
+import pandas as pd
+from src.domain.text_to_sql import run_text_to_sql
+
+result = run_text_to_sql(
+    query="<用户的具体问题>",
+    csv_path="data/<文件名>.csv",
+    output_dir="reports/"
+)
+
+print("=" * 60)
+print(f"SQL: {result['sql']}")
+print(f"共返回 {result['row_count']} 条结果")
+print()
+for row in result['rows']:
+    print("  ", row)
+print()
+print(result['summary'])
+```
+
+### 规则
+
+1. **query 参数**：直接引用用户原始自然语言问题
+2. **csv_path 参数**：根据用户提到的数据文件名填写（如 `data/sales.csv`）
+3. **结果展示**：
+   - 必须 print 生成的 SQL
+   - 必须 print 结果行数
+   - 逐行打印结果
+   - 打印自然语言摘要
+4. **输出文件**：结果同时写入 `reports/text_to_sql_result.json`
 
 ## 严格禁止
 
