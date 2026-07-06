@@ -1,3 +1,55 @@
+## 2026-07-06 Week3-Day2 数据质量自动检测模块
+
+- 目标：实现数据质量自动检测模块，识别缺失值、异常值、类型冲突、重复行
+- 新增文件：
+  - `src/domain/data_quality.py` — 核心检测引擎
+    - `run_quality_check(df)` — 主入口，返回完整质量报告 dict
+    - `_check_missing(df)` — 缺失值检测，输出每列缺失率 + high/medium/low 风险等级
+    - `_check_outliers(df)` — 异常值检测（数值列 IQR 法 + 类别列频率异常 <=2 次）
+    - `_check_type_conflicts(df)` — 类型冲突检测（object 列 pd.to_numeric 部分成功判断）
+    - `_check_duplicates(df)` — 重复行检测
+    - `_compute_score(...)` — 综合评分（0-100），扣分规则：
+      - 缺失值：high -15 / medium -8 / low -2
+      - 异常值：每 1% 异常率 -1 分
+      - 类型冲突：每列 mixed -10
+      - 重复行：每 1% 重复率 -1 分
+    - `_generate_recommendations(...)` — 中文修复建议生成
+  - `tests/test_data_quality.py` — 10 个测试场景全覆盖
+- 修改文件：
+  - `src/domain/__init__.py` — 新增 `from src.domain.data_quality import run_quality_check` 导出
+  - `src/agent/nodes/prompts/coder.md` — 新增"数据质量检查模板"段落，当用户需求涉及数据质量/数据清洗/检查数据时，Coder 生成调用 `run_quality_check` 的代码
+- 实现要点：
+  - **缺失值检测**：`df.isnull().sum()`，>20% high / 5-20% medium / <5% low
+  - **异常值检测**：
+    - 数值列：IQR 法（Q1 - 1.5×IQR, Q3 + 1.5×IQR），最多取 5 个偏离最大的示例
+    - 类别列：频率异常，出现次数 ≤2 的标记为 suspicious
+  - **类型冲突**：遍历 object/string 列，`pd.to_numeric(errors='coerce')`，部分成功部分失败 → mixed
+  - **重复行**：`df.duplicated().sum()`，输出重复数和前 5 个索引
+  - **报告格式**：JSON 风格 dict，含 overall_score / columns[] / duplicate_rows / duplicate_rate / recommendations
+  - **recommendations 为中文**，保持与用户语言一致
+  - 所有数值计算使用 pandas/numpy 向量化操作，无纯 Python 循环
+- 与 Coder 集成：
+  - 在 `coder.md` 中新增模板：检测到"数据质量"/"数据清洗"/"检查数据"关键词时生成调用 `run_quality_check` 的标准化代码
+  - 生成的代码包含完整的报告打印逻辑（评分、列概况、修复建议）
+  - 数据质量检查作为**领域模板**实现，不新增 Graph 节点（保持 LangGraph 结构简洁）
+- 测试覆盖：
+  - 场景1：正常数据无问题 → 验证 high score、零异常/缺失
+  - 场景2：高缺失率（50%）→ 验证 high level + 缺失建议
+  - 场景3：异常值（99999）→ IQR 法检出
+  - 场景4：混合类型（"123" + "abc"）→ mixed 标记
+  - 场景5：重复行（10%）→ 重复计数 + 去重建议
+  - 场景6：空 DataFrame → 不崩溃，字段完整
+  - 场景7：类别列低频值 → suspicious 检出
+  - 场景8：sales.csv 真实数据 → 缺失值检出率 >=80%，异常值 >=4 个
+  - 场景9：全干净数据 → 满分 100
+  - 场景10：综合场景（缺失 + 异常值）→ 扣分 + 建议 >=2 条
+  - **10/10 通过**
+- 验证：
+  - `python -m py_compile src/domain/data_quality.py` ✅
+  - `python -m py_compile src/domain/__init__.py` ✅
+  - `python -m pytest tests/test_data_quality.py -v` 10/10 通过 ✅
+  - 全部回归测试通过（无回归）✅
+
 ## 2026-06-20 Week1-Day1
 - 目标：实现StateGraph基础骨架
 - 输入：user_query, workspace_path

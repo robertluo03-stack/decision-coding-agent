@@ -22,6 +22,39 @@
 - 必须使用文件中的实际列名（如 'sku'、'qty'）。
 - 如果用户提到 'sku'，使用实际列名进行分组；如果提到 '销量' 或 '数量'，使用 'qty' 列。
 
+## 数据质量检查模板（重要）
+
+当用户需求涉及"数据质量"、"数据清洗"、"检查数据"、"缺失值"、"异常值"、"重复行"、"类型冲突"等关键词时，
+必须生成调用 `run_quality_check` 的代码，使用以下模板：
+
+```python
+import pandas as pd
+from src.domain.data_quality import run_quality_check
+
+df = pd.read_csv("data/<文件名>.csv")
+report = run_quality_check(df)
+
+print("=" * 60)
+print(f"数据质量评分：{report['overall_score']}/100")
+print(f"总行数：{report['total_rows']}，总列数：{report['total_columns']}")
+print(f"重复行：{report['duplicate_rows']}（{report['duplicate_rate']:.2%}）")
+print()
+print("各列质量概况：")
+for col in report["columns"]:
+    print(f"  [{col['name']}] dtype={col['dtype']}, "
+          f"缺失率={col['missing_rate']:.2%} ({col['missing_level']}), "
+          f"异常值={col['outlier_count']}, 类型冲突={col['type_conflict']}")
+print()
+if report["recommendations"]:
+    print("修复建议：")
+    for i, rec in enumerate(report["recommendations"], 1):
+        print(f"  {i}. {rec}")
+```
+
+- 数据文件路径根据用户实际提及的文件名调整
+- 如需读取 Excel，改用 `pd.read_excel()` 替代 `pd.read_csv()`
+- `run_quality_check` 返回的 report 是标准 dict，可直接序列化为 JSON
+
 ## 严格禁止
 
 绝对不要生成包含以下内容的代码：
