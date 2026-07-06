@@ -1,3 +1,63 @@
+## 2026-07-06 Week3-Day3 图表可视化模块（Plotly）
+
+- 目标：实现 5 种 Plotly 交互式图表模板，解决 Matplotlib 中文乱码问题，统一使用 Plotly 生成 HTML 图表
+- 新增文件：
+  - `src/domain/chart_templates.py` — 5 种 Plotly 图表模板
+    - `bar_chart(df, x_col, y_col, title, output_path)` — 类别对比柱状图（`go.Bar`）
+    - `line_chart(df, x_col, y_col, title, output_path)` — 时间序列折线图（`go.Scatter`, mode='lines'）
+    - `histogram_chart(df, x_col, y_col, title, output_path)` — 数值分布直方图（`px.histogram`）
+    - `scatter_chart(df, x_col, y_col, title, output_path)` — 相关性散点图（`go.Scatter`, mode='markers'）
+    - `heatmap_chart(df, x_col, y_col, title, output_path)` — 相关性矩阵热力图（`px.imshow`）
+    - `_ensure_output_dir(output_path)` — 内部辅助，输出目录不存在时自动创建
+    - 所有函数签名一致：统一接收 `(df, x_col, y_col, title, output_path)`，返回 `output_path`
+  - `tests/test_chart_templates.py` — 18 个测试场景全覆盖
+- 修改文件：
+  - `src/domain/__init__.py` — 新增 5 个图表函数导出
+  - `src/agent/nodes/prompts/coder.md` — 新增"图表生成模板"段落：
+    - 当用户需求涉及"画图"/"可视化"/"图表"/"趋势"/"对比"/"分布"等关键词时，Coder 生成调用 `chart_templates` 的代码
+    - 5 种图表选择规则：趋势→line_chart、对比→bar_chart、分布→histogram_chart、关系→scatter_chart、相关性矩阵→heatmap_chart
+    - 输出路径统一为 `reports/charts/` 目录
+    - 环境约束更新：可用库新增 `plotly`
+  - `src/agent/nodes/reporter.py` — 新增 `_detect_chart_files()` 图表文件检测：
+    - 在报告附录中自动检测 `workspace/reports/charts/` 下的 HTML 文件
+    - 为每个 `.html` 文件生成 Markdown 链接（如 `[chart_name](charts/chart_name.html)`）
+    - 无图表文件时不追加章节（保持报告简洁）
+- 实现要点：
+  - **Plotly 配置**：
+    - 使用 `plotly.io.write_html` 输出完整 HTML 文件（含 JS CDN，浏览器可直接打开）
+    - 图表尺寸：width=900, height=600
+    - 模板：`plotly_white`（浅色专业风格）
+    - 中文字体：Plotly 在浏览器端渲染，依赖系统字体，Docker 中已装 `fonts-wqy-microhei`
+    - 不依赖 `kaleido`（禁止静态图片导出，体积大且易出兼容问题）
+  - **输出路径**：所有图表保存到 `workspace/reports/charts/`，目录不存在时自动创建
+  - **与 Coder 集成**：检测到可视化关键词时生成标准化调用代码
+  - **与 Reporter 集成**：报告附录自动发现并链接 HTML 图表文件
+- 测试覆盖：
+  - 5 种图表各生成 1 张 ✅
+  - 空数据 DataFrame → 不崩溃，生成空图表 ✅
+  - 单列/单行数据 → 正常生成 ✅
+  - 大数据量（10k 点）→ 1 秒内完成 ✅
+  - 中文标题/轴标签 → HTML 内容正确包含 ✅
+  - 输出目录自动创建 → 嵌套目录正确创建 ✅
+  - histogram 带颜色分组 → px.histogram color 参数正确 ✅
+  - heatmap 无数字列 → 不崩溃，生成提示信息 ✅
+  - heatmap 含 NaN → corr 计算不崩溃 ✅
+  - 全部 5 种图表返回类型一致 → 返回值 == output_path ✅
+  - **18/18 通过**
+- 验证：
+  - `python -m py_compile src/domain/chart_templates.py` ✅
+  - `python -m py_compile src/domain/__init__.py` ✅
+  - `python -m py_compile src/agent/nodes/reporter.py` ✅
+  - `python -m pytest tests/test_chart_templates.py -v` 18/18 通过 ✅
+  - 全部回归测试 158/158 通过（零回归）✅
+- 与 Week 3 计划对照：
+  - [x] 可视化图表生成（Plotly/Matplotlib）— 已完成，统一使用 Plotly
+  - [x] Matplotlib 中文乱码 — 已彻底解决（不再使用 Matplotlib，改用 Plotly + 浏览器端渲染）
+- Dockerfile 字体确认：
+  - `fonts-wqy-microhei` 已在 Week3-Day0 安装（第 12 行）
+  - Plotly 在浏览器端渲染，不依赖 Docker 容器内字体
+  - 无需修改 Dockerfile
+
 ## 2026-07-06 Week3-Day2 数据质量自动检测模块
 
 - 目标：实现数据质量自动检测模块，识别缺失值、异常值、类型冲突、重复行

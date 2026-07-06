@@ -212,6 +212,15 @@ def _build_report(
     lines.append(f"- **工作区**: `{state.get('workspace_path', 'N/A')}`")
     lines.append(f"- **临时执行文件**: `{state.get('file_path', 'N/A')}`")
     lines.append(f"- **报告文件**: `workspace/reports/{'fail' if is_aborted else 'report'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md`")
+
+    # ---- 图表文件检测 ----
+    chart_links = _detect_chart_files(state)
+    if chart_links:
+        lines.append("")
+        lines.append("### 生成的图表")
+        lines.append("")
+        for link in chart_links:
+            lines.append(f"- {link}")
     lines.append("")
 
     return "\n".join(lines)
@@ -235,6 +244,41 @@ def _format_feedback_label(feedback: str) -> str:
     if feedback == "SKIP":
         return "跳过当前步骤"
     return feedback  # 未识别的直接原文显示
+
+
+# ---------------------------------------------------------------------------
+# 图表文件检测
+# ---------------------------------------------------------------------------
+
+
+def _detect_chart_files(state: AgentState) -> list[str]:
+    """检测 workspace/reports/charts/ 下的 HTML 图表文件。
+
+    为每个找到的 .html 文件生成 Markdown 链接，用于附录中引用。
+
+    Args:
+        state: AgentState（用于获取 workspace_path）
+
+    Returns:
+        格式为 `[文件名](charts/<文件名>.html)` 的 Markdown 链接列表，
+        未找到任何图表时返回空列表。
+    """
+    workspace = Path(state.get("workspace_path", "."))
+    chart_dir = workspace / "reports" / "charts"
+
+    if not chart_dir.is_dir():
+        return []
+
+    html_files = sorted(chart_dir.glob("*.html"))
+    if not html_files:
+        return []
+
+    links: list[str] = []
+    for f in html_files:
+        name = f.stem
+        links.append(f"- [{name}](charts/{f.name})")
+
+    return links
 
 
 # ---------------------------------------------------------------------------
