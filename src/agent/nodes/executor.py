@@ -349,6 +349,10 @@ def executor_node(state: AgentState) -> dict:
 
     tmp_path = _write_temp_file(code, workspace)
 
+    # 将项目根目录注入 PYTHONPATH，确保生成的代码能 import src.domain.*
+    project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
+    env = {**os.environ, "PYTHONPATH": project_root}
+
     try:
         result = subprocess.run(
             [sys.executable, str(tmp_path)],
@@ -357,6 +361,7 @@ def executor_node(state: AgentState) -> dict:
             timeout=EXECUTION_TIMEOUT,
             cwd=str(workspace),
             stdin=subprocess.DEVNULL,  # 防止子进程继承 stdio transport pipe（Windows 兼容）
+            env=env,
         )
 
         # 根据 returncode 和 stdout/stderr 决定 error 字段

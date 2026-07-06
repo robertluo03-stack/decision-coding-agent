@@ -151,6 +151,11 @@ class AgentState(TypedDict):
 | 2026-06-21 | MCP协议封装工具层 | 2026最热招聘关键词，可扩展性强 | 需要理解MCP SDK |
 | 2026-06-21 | 优化模板化而非自由建模 | 保证正确率，体现领域知识 | 灵活性降低 |
 | 2026-06-21 | RAG推迟到V3 | 先用结构化Prompt，降低初期复杂度 | 知识检索能力弱于完整RAG |
+| 2026-07-06 | Plotly 替代 Matplotlib | 中文乱码根本解决（浏览器端渲染 vs 服务端字体），交互式 HTML 体验更好 | Plotly 图表为大文件（~5MB per chart），CDN 依赖 |
+| 2026-07-06 | DuckDB 作为 Text-to-SQL 引擎 | 嵌入式零配置（pip install 即用），read_csv_auto 自动推断类型，pandas 互操作无缝 | LLM 可能生成幻觉列名，生产需 Few-Shot Prompt 加固 |
+| 2026-07-06 | 结论引擎规则化 | if-else 规则零延迟、零成本、100% 可预测，不调用 LLM 避免额外 API 开销 | 无法理解业务语义，规则刚性 |
+| 2026-07-06 | 领域模板分层：run_analysis 调用 run_quality_check + chart_templates | 模块化复用，不重复实现逻辑；一键分析 = 读取→质量→EDA→图表→报告 | 模板间耦合通过函数调用管理 |
+| 2026-07-06 | Executor subprocess PYTHONPATH 注入 | Coder 生成的 `from src.domain.xxx import ...` 在 subprocess 中可用；项目根目录动态计算 | 环境隔离性弱于 Docker 容器 |
 
 ---
 
