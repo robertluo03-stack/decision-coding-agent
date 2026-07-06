@@ -86,6 +86,7 @@
 - `src/mcp/server.py`（注册 2 个新 Tool）
 - `tests/test_file_tools.py`（新增测试）
 - 可能新增：`src/mcp/tools/data_utils.py`（类型推断辅助函数）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 
@@ -147,6 +148,7 @@
 **需要修改的文件**：
 - `src/agent/nodes/prompts/coder.md`（新增数据质量检查模板说明）
 - `src/agent/nodes/coder.py`（可选：让 Coder 识别"数据质量"意图时生成调用代码）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 
@@ -230,6 +232,7 @@ print(report)
 
 **需要修改的文件**：
 - `src/agent/nodes/prompts/coder.md`（新增 EDA 模板说明）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 
@@ -310,6 +313,7 @@ def run_eda(df: pd.DataFrame, output_dir: str = "reports/") -> dict:
 **需要修改的文件**：
 - `src/agent/nodes/prompts/coder.md`（新增图表生成模板说明）
 - `Dockerfile`（确认中文字体已安装，Day 0 已完成）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 
@@ -389,6 +393,7 @@ print("图表已保存到 reports/charts/monthly_sales.html")
 - `src/agent/nodes/prompts/coder.md`（新增 Text-to-SQL 约束）
 - `src/agent/nodes/debugger.py`（新增 DuckDB 错误分类）
 - `src/agent/sandbox/security_checker.py`（可选：SQL 危险关键字检查）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 
@@ -488,6 +493,7 @@ CREATE TABLE sales (
 - `src/agent/nodes/coder.py`（生成调用模板的代码）
 - `src/agent/nodes/prompts/planner.md`（新增数据分析意图示例）
 - `src/agent/nodes/prompts/coder.md`（新增模板调用示例）
+- `DEV_LOG.md`（参照文档结构，记录这次开发）
 
 **实现要点**：
 

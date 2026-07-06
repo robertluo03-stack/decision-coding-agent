@@ -10,6 +10,8 @@ from mcp.server import FastMCP
 
 from src.mcp.tools.file_tools import (
     file_exists,
+    file_read_csv,
+    file_read_excel,
     list_dir,
     read_csv,
     read_file,
@@ -71,7 +73,7 @@ def tool_file_write(filepath: str, content: str, overwrite: bool = True) -> str:
     return write_file(filepath, content, overwrite=overwrite)
 
 
-@server.tool(name="file_read_csv", description="读取 CSV 文件，返回结构化的 JSON 字符串")
+@server.tool(name="file_read_csv_legacy", description="读取 CSV 文件，返回结构化的 JSON 字符串")
 def tool_file_read_csv(filepath: str) -> str:
     """读取 CSV 文件，返回 JSON 字符串。
 
@@ -85,6 +87,45 @@ def tool_file_read_csv(filepath: str) -> str:
         JSON 字符串，格式: [{"col1": "val1", ...}, ...]
     """
     return read_csv(filepath)
+
+
+@server.tool(name="file_read_csv", description="使用 pandas 读取 CSV 文件，返回结构化摘要（列信息、类型推断、预览、缺失值统计）")
+def tool_file_read_csv_enhanced(file_path: str, preview_rows: int = 5) -> str:
+    """使用 pandas 增强读取 CSV，返回包含列信息、类型推断、预览数据和缺失值统计的结构化 JSON。
+
+    所有路径操作限定在工作区范围内，禁止 .. 穿越。
+
+    Args:
+        file_path: CSV 文件路径（相对 workspace 或绝对路径）
+        preview_rows: 预览行数（默认 5，防止大文件内存溢出）
+
+    Returns:
+        JSON 字符串，含 columns / dtypes / preview / shape / missing_summary
+    """
+    return file_read_csv(file_path, preview_rows)
+
+
+@server.tool(name="file_read_excel", description="使用 pandas 读取 Excel 文件，返回结构化摘要（列信息、类型推断、预览、缺失值统计）")
+def tool_file_read_excel(file_path: str, sheet_name: str = "0", preview_rows: int = 5) -> str:
+    """使用 pandas 读取 Excel 文件（.xlsx/.xls），返回结构化 JSON。
+
+    支持指定 sheet 名称或索引（默认 "0" 即第一个 sheet）。
+    所有路径操作限定在工作区范围内，禁止 .. 穿越。
+
+    Args:
+        file_path: Excel 文件路径
+        sheet_name: sheet 名称或索引（默认 "0"）
+        preview_rows: 预览行数（默认 5）
+
+    Returns:
+        JSON 字符串，含 columns / dtypes / preview / shape / missing_summary
+    """
+    # sheet_name 可能是数字字符串（如 "0"）或实际名称
+    try:
+        sheet = int(sheet_name)
+    except ValueError:
+        sheet = sheet_name
+    return file_read_excel(file_path, sheet, preview_rows)
 
 
 @server.tool(name="file_list_dir", description="列出目录内容，返回文件/子目录清单")

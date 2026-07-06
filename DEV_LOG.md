@@ -946,3 +946,58 @@ docker run --rm --name dc-sandbox-7f38740a4eda \
 ### 遗留
 - Docker 模式 Graph 测试（Task 3）需要 Docker 环境实际运行，当前环境仅完成语法检查
 - Docker 镜像重建（Task 5）待执行 `docker build`，建议在 Week 3 Day 0 或 Day 1 集中完成
+
+## 2026-07-06 Week3-Day1 File Tool 增强（CSV/Excel 读取 + 类型推断）
+
+- 目标：扩展 MCP file_tools 支持 CSV/Excel 结构化读取，并做数据类型推断
+- 新增文件：
+  - `src/mcp/tools/data_utils.py` — 类型推断辅助函数
+    - `map_dtype_to_string()`: pandas dtype → 简洁字符串（int/float/str/datetime/bool/unknown）
+    - `detect_percentage_column()`: 检测所有非空值含 `%` 的列 → `percentage`
+    - `detect_datetime_column()`: 6 种常见日期格式正则匹配（阈值 70%） → `datetime`
+    - `detect_mixed_column()`: pd.to_numeric 部分成功 → `mixed`
+    - `enhance_dtypes()`: 整合以上规则，优先级 datetime > percentage > datetime regex > mixed > default
+    - `compute_missing_summary()`: 每列缺失值统计
+  - `tests/test_file_tools.py` — 28 项测试全覆盖
+- 修改文件：
+  - `src/mcp/tools/file_tools.py`：
+    - 新增 `file_read_csv(file_path, preview_rows=5)` — pandas 增强读取，返回 `{columns, dtypes, preview, shape, missing_summary}`
+    - 新增 `file_read_excel(file_path, sheet_name=0, preview_rows=5)` — Excel 增强读取，格式一致，sheet 不存在时清晰报错
+    - 导入 pandas + data_utils
+    - pandas 3.0 兼容：`infer_objects(copy=False)` → `infer_objects()`
+    - Excel 文件句柄修复：`try/finally` 确保 `ExcelFile.close()` 释放 Windows 文件锁
+  - `src/mcp/server.py`：
+    - 注册 `file_read_csv` (增强) + `file_read_excel` 共 2 个新 Tool
+    - 旧 `file_read_csv` 重命名为 `file_read_csv_legacy`
+    - MCP `list_tools()` 返回 8 个 Tool（原 6 + 新增 2）
+- 测试覆盖：
+  - 7 项 CSV 测试（基本类型、datetime、percentage、mixed、preview_rows、缺失值、空文件）
+  - 6 项 Excel 测试（基本、sheet 名称、sheet 索引、未知 sheet 名称、越界索引、缺失值）
+  - 3 项路径安全测试（CSV/Excel 越权 + 绝对路径拦截）
+  - 12 项 data_utils 单元测试（dtype 映射 x5、percentage x2、datetime x2、mixed x2、missing_summary x1）
+  - **28/28 通过**
+- 验收对照：
+
+| 验收项 | 状态 | 说明 |
+|--------|------|------|
+| py_compile 全部通过 | ✅ | data_utils.py / file_tools.py / server.py 无报错 |
+| test_file_tools.py 28 项全部通过 | ✅ | 7 CSV + 6 Excel + 3 安全 + 12 data_utils |
+| 全部回归测试 144/144 通过 | ✅ | Week 1/2 原有测试零回归 |
+| MCP list_tools() 返回 8 个 Tool | ✅ | file_read / file_write / file_read_csv_legacy / file_read_csv / file_read_excel / file_list_dir / file_exists / python_exec |
+| file_read_csv 对 sales.csv 正确 | ✅ | 日期→datetime, SKU→str, qty→int, price→int，shape=[14,4] |
+| 越权路径拦截 | ✅ | ../ + 绝对路径均被拦截 |
+| 缺失值标记 | ✅ | missing_summary 仅包含有缺失值的列 |
+| 未知 sheet 报错 | ✅ | 名称/索引不存在均抛出 ValueError 含可用列表 |
+
+- 踩坑记录：
+  1. **pandas 3.0 StringDtype**：pandas 3.0 默认对字符串列使用 `StringDtype`（str(dtype)=`"str"`），而非传统 `object`。`map_dtype_to_string` 和 `enhance_dtypes` 中的 `== "object"` 判断需扩展为 `in ("object", "str") or startswith("str")`
+  2. **pandas 3.0 infer_objects(copy=False) deprecation**：`copy` 参数已废弃（3.0 启用 Copy-on-Write），改为无参 `infer_objects()`
+  3. **Windows Excel 文件锁**：`pd.ExcelFile()` 打开后未显式 close 导致 teardown 时文件被锁定，`try/finally` 确保句柄释放
+  4. **numpy bool identity**：`np.True_ is True` 返回 False（numpy 布尔是独立类型），测试中用 `bool()` 包装或直接 truthy 判断
+
+- 技术要点：
+  - pandas 读取 + `infer_objects()` → 自动推断 int/float 列
+  - 字符串列再经 3 层自定义规则（percentage / datetime regex / mixed）增强推断
+  - 所有路径操作复用 `_resolve_safe_path()` 工作区限制
+  - `preview_rows` 默认 5，防止大文件内存溢出
+  - 日志使用 loguru 的 `logger.info` / `logger.debug`，不向 stdout 打印

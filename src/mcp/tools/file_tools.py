@@ -2,6 +2,7 @@
 
 支持 CSV、Excel、JSON 等格式的读写操作。
 Week 2 版本：路径安全校验 + CallToolResult 包装 + 新增 list_dir / file_exists。
+Week 3 Day 1：新增 file_read_csv（pandas 增强） + file_read_excel + 类型推断。
 """
 
 import csv
@@ -10,7 +11,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 from loguru import logger
+
+from src.mcp.tools.data_utils import compute_missing_summary, enhance_dtypes
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -233,6 +237,142 @@ def read_csv(filepath: str, *, workspace: str | None = None) -> str:
             rows.append(row)
     logger.info("CSV read: {} rows from {}", len(rows), path)
     return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
+def file_read_csv(
+    file_path: str,
+    preview_rows: int = 5,
+    *,
+    workspace: str | None = None,
+) -> str:
+    """使用 pandas 读取 CSV 文件，返回结构化 JSON（含列信息、类型推断、预览、缺失值）。
+
+    相比 read_csv()（返回纯字符串列表），本函数返回增强的结构化摘要：
+      - columns: 列名列表
+      - dtypes: 增强类型推断结果（int/float/str/datetime/percentage/mixed）
+      - preview: 前 preview_rows 行的字典列表
+      - shape: [行数, 列数]
+      - missing_summary: 每列缺失值数量（仅包含有缺失的列）
+
+    Args:
+        file_path: CSV 文件路径（相对 workspace 或绝对路径）
+        preview_rows: 预览行数（默认 5，防止大文件内存溢出）
+        workspace: 工作区根目录
+
+    Returns:
+        JSON 字符串，包含结构化摘要信息
+    """
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(file_path, ws)
+    _validate_file(path)
+
+    df = pd.read_csv(path)
+    df = df.infer_objects()
+
+    # 限制预览行数
+    preview = df.head(preview_rows).to_dict("records")
+
+    result = {
+        "columns": list(df.columns),
+        "dtypes": enhance_dtypes(df),
+        "preview": preview,
+        "shape": [len(df), len(df.columns)],
+        "missing_summary": compute_missing_summary(df),
+    }
+
+    logger.info(
+        "file_read_csv: {} | rows={} cols={} | dtypes={} | missing={}",
+        path.name,
+        len(df),
+        len(df.columns),
+        len(result["dtypes"]),
+        len(result["missing_summary"]),
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+
+
+def file_read_excel(
+    file_path: str,
+    sheet_name: str | int = 0,
+    preview_rows: int = 5,
+    *,
+    workspace: str | None = None,
+) -> str:
+    """使用 pandas 读取 Excel 文件，返回结构化 JSON。
+
+    返回格式与 file_read_csv() 一致，包含 columns / dtypes / preview / shape / missing_summary。
+
+    Args:
+        file_path: Excel 文件路径（.xlsx / .xls，相对 workspace 或绝对路径）
+        sheet_name: sheet 名称或索引（默认 0，即第一个 sheet）
+        preview_rows: 预览行数（默认 5，防止大文件内存溢出）
+        workspace: 工作区根目录
+
+    Returns:
+        JSON 字符串，包含结构化摘要信息
+
+    Raises:
+        ValueError: sheet_name 不存在时，列出可用的 sheet 名称
+    """
+    ws = Path(workspace).resolve() if workspace else _get_workspace()
+    path = _resolve_safe_path(file_path, ws)
+    _validate_file(path)
+
+    # 先检查可用 sheet，以便给出清晰错误信息
+    available_sheets = None
+    xl = None
+    try:
+        xl = pd.ExcelFile(path, engine="openpyxl")
+        available_sheets = xl.sheet_names
+    except Exception:
+        # 回退：让 pandas 直接读取（可能 engine 不匹配）
+        pass
+
+    try:
+        if available_sheets is not None:
+            if isinstance(sheet_name, int):
+                if sheet_name < 0 or sheet_name >= len(available_sheets):
+                    raise ValueError(
+                        f"Sheet 索引 {sheet_name} 不存在。"
+                        f"可用 sheet（共 {len(available_sheets)} 个）: {available_sheets}"
+                    )
+            else:
+                if sheet_name not in available_sheets:
+                    raise ValueError(
+                        f"Sheet '{sheet_name}' 不存在。"
+                        f"可用 sheet: {available_sheets}"
+                    )
+
+        df = pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
+    finally:
+        if xl is not None:
+            xl.close()
+    df = df.infer_objects()
+
+    # 限制预览行数
+    preview = df.head(preview_rows).to_dict("records")
+
+    result = {
+        "columns": list(df.columns),
+        "dtypes": enhance_dtypes(df),
+        "preview": preview,
+        "shape": [len(df), len(df.columns)],
+        "missing_summary": compute_missing_summary(df),
+    }
+
+    # 记录实际使用的 sheet 名称
+    actual_sheet = available_sheets[sheet_name] if (available_sheets and isinstance(sheet_name, int)) else sheet_name
+
+    logger.info(
+        "file_read_excel: {} | sheet={} | rows={} cols={} | dtypes={} | missing={}",
+        path.name,
+        actual_sheet,
+        len(df),
+        len(df.columns),
+        len(result["dtypes"]),
+        len(result["missing_summary"]),
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 
 def list_dir(
