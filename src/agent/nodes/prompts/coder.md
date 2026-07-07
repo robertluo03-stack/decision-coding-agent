@@ -172,7 +172,155 @@ print(f"分析报告已生成: {report_path}")
 | "画出各区域销量对比图" | `chart_templates`（单一场景） |
 | "查询华北地区总销量" | `run_text_to_sql`（单一场景） |
 
-## 严格禁止
+## 供应链库存优化模板（最高精度场景）
+
+当用户需求涉及**库存管理、订货决策、需求预测**时，使用以下领域模板。
+这些模板面向供应链运筹优化场景，保证计算精度和业务可解释性。
+
+### 5a. EOQ 经济订货批量
+
+- **适用场景**：用户提到"订货成本"、"持有成本"、"年需求"、"EOQ"、"经济订货批量"、"最优订货量"
+- **调用方式**：
+  ```python
+  from src.domain.templates.inventory_eoq import calculate, EOQParams
+
+  result = calculate(EOQParams(annual_demand=1000, ordering_cost=50, holding_cost=2))
+  print(f"经济订货批量（EOQ）= {result.eoq:.2f} 件")
+  print(f"年订货次数 = {result.annual_orders:.2f} 次")
+  print(f"年订货成本 = ¥{result.total_ordering_cost:.2f}")
+  print(f"年持有成本 = ¥{result.total_holding_cost:.2f}")
+  print(f"年总成本 = ¥{result.total_cost:.2f}")
+  ```
+- **参数**：annual_demand（年需求量）、ordering_cost（每次订货成本）、holding_cost（单位年持有成本）
+- **可选**：unit_cost（单价，用于计算总成本）
+
+### 5b. 需求预测
+
+- **适用场景**：用户提到"预测需求"、"趋势"、"平滑"、"forecast"、"未来需求"、"需求量预测"
+- **调用方式**：
+  ```python
+  from src.domain.templates.demand_forecast import forecast, ForecastParams
+
+  result = forecast(ForecastParams(
+      history=[100, 120, 110, 130, 125, 140],
+      method="auto",    # 可选: sma, wma, ses, holt, auto
+      periods=3
+  ))
+  print(f"使用方法: {result.method_used}")
+  print(f"未来 {len(result.forecasts)} 期预测值: {result.forecasts}")
+  print(f"In-sample MAE = {result.mae:.2f}, RMSE = {result.rmse:.2f}, MAPE = {result.mape:.2f}%")
+  ```
+- **参数**：history（历史需求列表）、method（方法名或"auto"自动选择）、periods（预测期数）
+- **可选**：alpha（平滑系数，默认 0.3）、beta（趋势平滑系数，默认 0.1）、window（窗口大小，默认 3）
+
+### 5c. 安全库存
+
+- **适用场景**：用户提到"安全库存"、"服务水平"、"缺货风险"、"service level"、"buffer stock"、"库存缓冲"
+- **调用方式**：
+  ```python
+  from src.domain.templates.safety_stock import calculate_safety_stock, SafetyStockParams
+
+  result = calculate_safety_stock(SafetyStockParams(
+      avg_demand=100,       # 月均需求
+      demand_std=20,         # 需求标准差
+      lead_time=2,           # 提前期（月）
+      service_level=95       # 支持 95 或 0.95
+  ))
+  print(f"安全库存 = {result.safety_stock:.2f} 件")
+  print(f"Z 分数 = {result.z_score}")
+  print(f"提前期平均需求 = {result.reorder_point_component:.2f}")
+  print(f"公式: {result.formula_used}")
+  ```
+- **参数**：avg_demand（平均需求）、demand_std（需求标准差）、lead_time（提前期）、service_level（服务水平，支持 95 或 0.95）
+- **可选**：lead_time_std（提前期标准差，默认 0 = 提前期固定）
+
+### 5d. 补货点（ROP）
+
+- **适用场景**：用户提到"补货点"、"订货点"、"reorder point"、"ROP"、"库存降到多少补货"、"触发补货"
+- **调用方式**：
+  ```python
+  from src.domain.templates.reorder_point import calculate, ROPParams
+
+  result = calculate(ROPParams(
+      avg_demand=100,
+      lead_time=2,
+      safety_stock=50,
+      eoq=224            # 可选，来自 EOQ 计算结果
+  ))
+  print(f"补货点 = {result.reorder_point:.2f} 件")
+  print(f"  提前期平均消耗 = {result.lead_time_demand:.2f}")
+  print(f"  安全库存 = {result.safety_stock:.2f}")
+  print(f"\\n建议: {result.suggestion}")
+  ```
+- **参数**：avg_demand（平均需求）、lead_time（提前期）、safety_stock（安全库存量）
+- **可选**：eoq（经济订货批量，若提供则建议中包含订货量和 (ROP, Q) 策略）
+
+### 5e. 模板组合使用
+
+当用户需求涉及多个库存决策（如"帮我全面评估库存策略"），可按以下顺序组合调用：
+
+```python
+from src.domain.templates.inventory_eoq import calculate as calc_eoq, EOQParams
+from src.domain.templates.safety_stock import calculate_safety_stock, SafetyStockParams
+from src.domain.templates.reorder_point import from_eoq_and_safety_stock
+
+# Step 1: EOQ — 确定最优订货量
+eoq = calc_eoq(EOQParams(annual_demand=1200, ordering_cost=50, holding_cost=2))
+print(f"EOQ = {eoq.eoq:.2f}")
+
+# Step 2: 安全库存 — 确定缓冲水平
+ss = calculate_safety_stock(SafetyStockParams(
+    avg_demand=100, demand_std=20, lead_time=2, service_level=95
+))
+print(f"安全库存 = {ss.safety_stock:.2f}")
+
+# Step 3: 补货点 — 整合为完整策略
+rop = from_eoq_and_safety_stock(
+    avg_demand=100, lead_time=2, eoq_result=eoq, safety_stock_result=ss
+)
+print(f"补货点 = {rop.reorder_point:.2f}")
+print(rop.suggestion)
+```
+
+### 模板选择规则
+
+1. **单一概念**：用户只提到一个概念（如只问 EOQ）→ 直接调用对应模板
+2. **多概念**：用户提到多个概念（如"帮我算 EOQ 和安全库存"）→ 按顺序分别计算
+3. **具体数字无概念**：用户提供了数字但不清楚概念 → 根据数字特征推断最相关的模板
+4. **关键词判断**：
+   - "订货成本/持有成本" → EOQ
+   - "预测/趋势/平滑" → 需求预测
+   - "安全库存/服务水平/Z值" → 安全库存
+   - "补货/ROP/库存降到" → 补货点
+
+### 重要：只访问结果对象中实际存在的字段
+
+领域模板返回的结果对象只包含计算结果字段，**不包含输入参数**。
+生成 print() 时只使用以下字段：
+
+| 模板 | 可用字段 |
+|------|---------|
+| `EOQResult` | eoq, annual_orders, total_ordering_cost, total_holding_cost, total_cost |
+| `ForecastResult` | forecasts, mae, rmse, mape, method_used, model_params |
+| `SafetyStockResult` | safety_stock, reorder_point_component, z_score, service_level, formula_used, assumptions |
+| `ROPResult` | reorder_point, lead_time_demand, safety_stock, eoq, suggestion |
+
+**禁止访问**：result.avg_demand、result.demand_std、result.lead_time、result.history、result.annual_demand 等输入参数字段。
+如需展示输入参数，直接引用传给模板的变量。
+
+### 与其他模板的优先级
+
+| 用户输入 | 使用模板 | 原因 |
+|----------|---------|------|
+| "分析 sales.csv 的库存数据" | `run_analysis` | 数据分析整体关键词 |
+| "帮我算 EOQ，年需求 1200" | `inventory_eoq` | 供应链优化场景 |
+| "预测未来 3 个月的需求量" | `demand_forecast` | 供应链优化场景 |
+| "安全库存设为 95% 服务水平" | `safety_stock` | 供应链优化场景 |
+| "库存降到 200 时补货" | `reorder_point` | 供应链优化场景 |
+| "画出各产品销量趋势" | `chart_templates` | 单一图表场景 |
+| "查询各区域库存总量" | `run_text_to_sql` | SQL 查询场景 |
+
+
 
 绝对不要生成包含以下内容的代码：
 - os.system(...)
