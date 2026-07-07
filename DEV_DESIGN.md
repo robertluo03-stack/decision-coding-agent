@@ -1,7 +1,7 @@
 # DecisionCoder — 开发设计文档
 
 > **面向自己**：这份文档会随着开发不断修改，记录设计决策、接口变更和踩坑记录。
-> **版本**：v0.3 | **日期**：2026-07-06 | **当前阶段**：Week 3 数据分析能力完成，进入 Week 4
+> **版本**：v0.4 | **日期**：2026-07-07 | **当前阶段**：Week 4 领域模板层完成，进入 Week 5
 
 ---
 
@@ -154,12 +154,12 @@ Planner → Coder → Executor → [条件路由]
 - **验收**：E2E 6/6 通过，255个测试全部通过，3个分析任务全部一次成功（retry_count=0） ✅
 
 ### Week 4：领域模板（核心差异化）
-- [ ] 模板匹配器：识别用户意图 → 匹配预定义模板
-- [ ] 模板1：需求预测（移动平均/指数平滑）— 已有骨架 `demand_forecast.py`
-- [ ] 模板2：安全库存计算（服务水平法）— 已有骨架 `safety_stock.py`
-- [ ] 模板3：EOQ经济订货批量 — 已实现 `inventory_eoq.py`
-- [ ] 模板4：补货点计算
-- [ ] 参数提取：从自然语言中提取模板参数
+- [x] 模板匹配器：识别用户意图 → 匹配预定义模板
+- [x] 模板1：需求预测（移动平均/指数平滑）— 已有骨架 `demand_forecast.py`
+- [x] 模板2：安全库存计算（服务水平法）— 已有骨架 `safety_stock.py`
+- [x] 模板3：EOQ经济订货批量 — 已实现 `inventory_eoq.py`
+- [x] 模板4：补货点计算
+- [x] 参数提取：从自然语言中提取模板参数
 - **验收**：输入"年需求1000，订货成本50，持有成本2"，输出EOQ=223.6
 
 ### Week 5：场景集成 + 完整闭环
@@ -203,6 +203,11 @@ Planner → Coder → Executor → [条件路由]
 | 2026-07-06 | 领域模板分层：run_analysis 调用 run_quality_check + chart_templates | 模块化复用，不重复实现逻辑 | 模板间耦合通过函数调用 |
 | 2026-07-06 | Executor subprocess PYTHONPATH 注入 | Coder 生成的 `from src.domain.xxx` 在 subprocess 中可用 | 环境隔离性弱于 Docker |
 | 2026-07-06 | Coder Prompt 模板体系（4级优先级） | 全局分析→run_analysis，单一质量→run_quality_check，单一图表→chart_templates，单一问数→run_text_to_sql | LLM 可能选错模板 |
+| 2026-07-07 | 模板匹配器和参数提取器规则化（正则+关键词） | 零 LLM 延迟、100% 可预测、可调试 | 复杂自然语言理解能力弱于 LLM |
+| 2026-07-07 | 安全库存三种波动场景分别处理 | 覆盖供应链管理的所有常见情况 | 公式复杂度递增 |
+| 2026-07-07 | 补货点模板作为 EOQ + 安全库存的组合器 | 展示模板间协作，体现架构设计 | 依赖前两个模板必须先实现 |
+| 2026-07-07 | 需求预测纯 Python 实现（不用 statsmodels） | 避免重量级依赖，保持项目轻量 | 算法精度可能低于专业库 |
+| 2026-07-07 | Coder Prompt 新增第 5 级供应链模板优先级 | 让用户自然语言直接触发领域模板 | LLM 可能选错模板或参数 |
 
 ---
 
@@ -284,7 +289,7 @@ decision-coder/
 │   │       ├── python_tools.py       # Python 沙箱执行（AST安全检查 + compile预检 + 保留临时文件）
 │   │       └── data_utils.py         # 类型推断辅助（5种规则: datetime/percentage/mixed/generic）
 │   └── domain/
-│       ├── __init__.py               # 领域层统一导出（8个符号: run_quality_check + 5图表 + run_text_to_sql）
+│       ├── __init__.py               # 领域层统一导出（26个符号: 8 原有 + 18 Week4新增）
 │       ├── schema.py                 # 领域数据模型
 │       ├── data_quality.py           # 数据质量检测引擎（4维度检测 + 0-100评分 + 中文建议）
 │       ├── chart_templates.py        # Plotly 图表模板（5种: bar/line/histogram/scatter/heatmap）
@@ -292,10 +297,13 @@ decision-coder/
 │       └── templates/                # 预定义领域模板
 │           ├── __init__.py
 │           ├── inventory_eoq.py      # EOQ 经济订货批量（calculate函数，已实现）
-│           ├── safety_stock.py       # 安全库存计算（骨架）
-│           ├── demand_forecast.py    # 需求预测（骨架）
+│           ├── safety_stock.py       # 安全库存计算（已实现，3种波动场景 + scipy Z-score）
+│           ├── demand_forecast.py    # 需求预测（已实现，4种算法 + auto选择 + 精度评估）
+│           ├── reorder_point.py      # 补货点计算（已实现，ROP + 复合接口 + 规则建议）
 │           └── data_analysis.py      # 一键数据分析（7步流水线 + 5章节报告 + 规则结论）
-├── tests/                            # 项目级测试（18个文件，249用例）
+│       ├── template_matcher.py       # 模板匹配器（多关键词打分 + 6类意图 + UNKNOWN兜底）
+│       └── param_extractor.py        # 参数提取器（正则数值提取 + 距离优先别名映射）
+├── tests/                            # 项目级测试（24个文件，369用例）
 │   ├── __init__.py
 │   ├── test_planner.py               # 1 场景
 │   ├── test_coder.py                 # 10 场景（结构/边界/执行/安全/AI_FIX）
@@ -313,7 +321,13 @@ decision-coder/
 │   ├── test_chart_templates.py       # 18 场景（5种图表 + 空/单行/大数据/中文/边界）
 │   ├── test_text_to_sql.py           # 30 场景（Schema/SQL安全/清理/执行/端到端/中文列名）
 │   ├── test_data_analysis_template.py # 19 场景（黄金路径/脏数据/空/中文/检测函数/结论）
-│   └── test_e2e_week3.py             # 6 场景（分析/图表/问数/质量检查/边界）
+│   ├── test_e2e_week3.py             # 6 场景（分析/图表/问数/质量检查/边界）
+│   ├── test_demand_forecast.py       # 20 场景（4种算法 + auto + 精度 + 边界）               ← Week 4
+│   ├── test_safety_stock.py          # 18 场景（3种波动 + Z-score + 标准化 + 边界）            ← Week 4
+│   ├── test_reorder_point.py         # 17 场景（ROP + 复合接口 + 建议 + 边界）                ← Week 4
+│   ├── test_template_matcher.py      # 21 场景（6类意图 + 混合 + 兜底 + 边界）                ← Week 4
+│   ├── test_param_extractor.py       # 30 场景（中/英数值提取 + 定向 + 缺失检测 + 边界）       ← Week 4
+│   └── test_e2e_week4.py             # 8 场景（4 LLM端到端 + 4 直接调用）                     ← Week 4
 ├── workspace/                        # 工作区（不提交git）
 │   ├── data/                         # 用户数据文件
 │   │   ├── sales.csv                 # 120行销售数据（含缺失值+异常值）
@@ -393,28 +407,39 @@ SQL 安全防线（Text-to-SQL）：
 1. **MCP协议**：工具层基于 FastMCP 封装8个标准化 Tool，支持 stdio transport
 2. **LangGraph状态机**：Plan-Code-Execute-Debug-Report 闭环，2个条件路由，支持循环调试
 3. **Human-in-the-loop**：14种规则错误分类 + LLM分析 + 4种人类选择，retry_count上限强制ABORT
-4. **领域模板体系**：一键分析（数据质量+EDA+图表+报告）、Text-to-SQL（自然语言→DuckDB SQL）、5种Plotly图表模板
+4. **领域模板体系**：5 个供应链模板（EOQ/预测/安全库存/补货点）+ 一键分析 + Text-to-SQL + 5种图表模板
 5. **沙箱安全**：5道纵深防线（LLM语义→AST检查→执行前预检→DockerRunner兜底→Docker容器隔离）
 6. **结论引擎规则化**：7条if-else规则生成中文结论，零LLM调用、零延迟、100%可预测
+7. **模板匹配与参数提取**：规则化意图分类 + 正则数值提取，零LLM延迟，100%可预测
 
-### 数字指标（Week 3 实际数据）
-- 代码运行成功率：**100%**（E2E 4/4 任务全部一次成功，retry_count=0）
-- 测试通过率：**100%**（255/255，零回归）
+### 数字指标（Week 4 实际数据）
+- 代码运行成功率：**100%**（E2E 8/8 任务全部一次成功，retry_count=0）
+- 测试通过率：**100%**（369/369，零回归）
 - 平均重试次数：**0**（E2E 无 Debugger 触发）
 - 任务完成率：**100%**
 - 图表生成成功率：**100%**（18单元 + 1 E2E）
 - SQL 安全检查拦截率：**100%**（11种危险模式全拦截）
-- 累计测试数：**255**（Week1: 55 → Week2: 144 → Week3: 255）
+- 模板匹配准确率：**100%**（11/11 手工测试）
+- 参数提取成功率：**89%**（8/9 手工测试）
+- 累计测试数：**369**（Week1: 55 → Week2: 144 → Week3: 255 → Week4: 369）
 
-### Week 1 → Week 3 架构演进
+### Week 1 → Week 4 架构演进
 
-| 维度 | Week 1 | Week 2 | Week 3 |
-|------|--------|--------|--------|
-| 执行方式 | subprocess | subprocess / MCP / Docker 三选一 | 同 Week 2 + PYTHONPATH 注入 |
-| 安全检查 | 字符串匹配（2套规则） | AST 语法级分析（统一） | 同 Week 2 + SQL 正则安全 |
-| 工具层 | 纯 Python 函数 | MCP 协议（6 Tool） | MCP 协议（8 Tool） |
-| 沙箱隔离 | 仅 subprocess 超时 | Docker 容器 5 维限制 | 同 Week 2 |
-| 日志系统 | print() | loguru 双通道 + rotation + compression | 同 Week 2 |
+| 维度 | Week 1 | Week 2 | Week 3 | Week 4 |
+|------|--------|--------|--------|--------|
+| 执行方式 | subprocess | subprocess / MCP / Docker 三选一 | 同 Week 2 + PYTHONPATH 注入 | 同 Week 3 |
+| 安全检查 | 字符串匹配（2套规则） | AST 语法级分析（统一） | 同 Week 2 + SQL 正则安全 | 同 Week 3 |
+| 工具层 | 纯 Python 函数 | MCP 协议（6 Tool） | MCP 协议（8 Tool） | 同 Week 3 |
+| 沙箱隔离 | 仅 subprocess 超时 | Docker 容器 5 维限制 | 同 Week 2 | 同 Week 2 |
+| 日志系统 | print() | loguru 双通道 + rotation + compression | 同 Week 2 | 同 Week 2 |
+| 错误诊断 | 6 种规则 | 14 种规则 + DuckDB 分类 | 同 Week 2 | 同 Week 2 |
+| 报告类型 | 单一 report_*.md | report_*.md / fail_*.md | 同 Week 2 + 图表链接检测 | 同 Week 3 |
+| 数据能力 | 无 | 无 | 质量检查 + 5图表 + Text-to-SQL + 一键分析 | 同 Week 3 |
+| 领域模板 | 无 | EOQ（骨架） | 3 骨架（EOQ/SS/Forecast） | **5 模板 + 2 引擎**（匹配器+提取器） |
+| 意图分类 | 无 | 无 | 无 | **规则化多关键词打分（6 类）** |
+| NL 参数提取 | 无 | 无 | 无 | **正则 + 距离优先别名匹配（85+ 别名）** |
+| 依赖库 | 5个 | 6个 | 9个（+plotly +duckdb +openpyxl） | 9个（零新增） |
+| 测试数 | 55 | 144 | 255 | **369** |
 | 错误诊断 | 6 种规则 | 14 种规则 + DuckDB 分类 | 同 Week 2 |
 | 报告类型 | 单一 report_*.md | report_*.md / fail_*.md | 同 Week 2 + 图表链接检测 |
 | 数据能力 | 无 | 无 | 质量检查 + 5图表 + Text-to-SQL + 一键分析 |
@@ -423,7 +448,7 @@ SQL 安全防线（Text-to-SQL）：
 
 ---
 
-## 十一、Week 3 领域模板层 API 参考
+## 十一、Week 4 领域模板层 API 参考
 
 ### 数据质量检查
 
@@ -475,3 +500,55 @@ result = calculate(EOQParams(annual_demand=1000, ordering_cost=50, holding_cost=
 | `file_list_dir` | 列出目录内容 |
 | `file_exists` | 检查文件是否存在 |
 | `python_exec` | Python 沙箱执行（AST 安全 + compile 预检） |
+
+### 需求预测
+
+```python
+from src.domain.templates.demand_forecast import forecast, auto_forecast, ForecastParams, ForecastResult
+
+# 指定方法
+result = forecast(ForecastParams(history=[100, 120, 110, 130], method="holt", periods=3))
+# → ForecastResult(forecasts=[...], mae=..., rmse=..., mape=..., method_used="Holt 双参数线性趋势")
+
+# 自动选择
+result = auto_forecast(history=[100, 120, 110, 130, 125], periods=3)
+```
+
+### 安全库存
+
+```python
+from src.domain.templates.safety_stock import calculate_safety_stock, quick_safety_stock, SafetyStockParams
+
+result = calculate_safety_stock(SafetyStockParams(
+    avg_demand=100, demand_std=20, lead_time=2, service_level=95
+))
+# → SafetyStockResult(safety_stock=46.52, z_score=1.6449, formula_used="情况 A — ...")
+```
+
+### 补货点
+
+```python
+from src.domain.templates.reorder_point import calculate, ROPParams
+
+result = calculate(ROPParams(avg_demand=100, lead_time=2, safety_stock=50, eoq=224))
+print(result.suggestion)
+# "当库存降至 250 时触发补货；每次订货量为 224；...建议采用 (ROP, Q) 库存策略。"
+```
+
+### 模板匹配
+
+```python
+from src.domain.template_matcher import match_template, TemplateType
+
+result = match_template("帮我算 EOQ，年需求 1000")
+# → MatchResult(template_type=TemplateType.EOQ, confidence=2.0, matched_keywords=["eoq"])
+```
+
+### 参数提取
+
+```python
+from src.domain.param_extractor import extract_params
+
+params = extract_params("年需求1000，订货成本50，持有成本2")
+# → {"annual_demand": 1000.0, "ordering_cost": 50.0, "holding_cost": 2.0}
+```

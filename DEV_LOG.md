@@ -1313,3 +1313,221 @@ src/domain/
 ### 回退点
 
 `git commit 当前状态`（Week 4 E2E + Coder 防御完成）
+
+---
+
+## 2026-07-07 — Week 4 完整总结
+
+### Benchmark 数字
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 单元测试通过率 | **327/327 = 100%** | 每周累计无回归 |
+| E2E 测试通过率 | **8/8 = 100%** | Week 4 新增供应链场景 |
+| 模板匹配准确率 | **100%** | 手动测试 11 条 query（中/英/混合/边界） |
+| 参数提取成功率 | **89%** | 手动测试 9 条 query（"预测未来 3 期"未匹配） |
+| 供应链模板独立调用成功率 | **100%** | EOQ/预测/安全库存/补货点各至少 1 次 |
+| 代码运行成功率 | **100%** | 4 个 E2E 任务全部一次成功 |
+| 平均重试次数 | **0** | E2E 4 任务 retry_count = 0 |
+| 累计测试数 | **369** | Week1:55 → Week2:144 → Week3:255 → Week4:369 |
+
+### 完成的子任务清单
+
+- [x] demand_forecast.py：SMA/WMA/SES/Holt + auto 选择 + 精度评估（MAE/RMSE/MAPE）
+- [x] safety_stock.py：三种波动场景（A/B/C）+ 服务水平法 + scipy Z-score
+- [x] reorder_point.py：ROP 计算 + 复合接口（from_eoq_and_safety_stock）+ 规则化建议
+- [x] template_matcher.py：多关键词打分 + 6 类意图 + UNKNOWN 兜底 + 推荐模板
+- [x] param_extractor.py：正则数值提取 + 距离优先别名映射 + 缺失参数检测
+- [x] domain/__init__.py 更新：26 符号统一导出（8 原有 + 18 新增）
+- [x] coder.md 更新：第 5 级供应链模板优先级 + 字段白名单约束
+- [x] E2E 测试：4 个供应链场景 + 4 个直接调用边界测试
+
+### 领域模板层 API 参考（新增）
+
+#### 需求预测
+
+```python
+from src.domain.templates.demand_forecast import forecast, auto_forecast, ForecastParams, ForecastResult
+
+# 显式指定方法
+result = forecast(ForecastParams(history=[100, 120, 110, 130, 125, 140], method="ses", periods=3))
+print(result.forecasts)  # 未来 3 期预测值
+print(result.mae, result.rmse, result.mape)  # 精度指标
+
+# 自动选择
+result = auto_forecast([100, 120, 110, 130], periods=2)
+print(result.method_used)  # 自动选择的方法名
+```
+
+#### 安全库存
+
+```python
+from src.domain.templates.safety_stock import calculate_safety_stock, quick_safety_stock, SafetyStockParams
+
+# 完整调用（支持三种波动场景）
+result = calculate_safety_stock(SafetyStockParams(
+    avg_demand=100, demand_std=20, lead_time=2, service_level=95
+))
+print(result.safety_stock, result.z_score, result.formula_used)
+
+# 便捷入口（仅需求波动，提前期固定）
+result = quick_safety_stock(100, 20, 2, service_level=95)
+```
+
+#### 补货点（ROP）
+
+```python
+from src.domain.templates.reorder_point import calculate, from_eoq_and_safety_stock, ROPParams
+
+# 基本调用
+result = calculate(ROPParams(avg_demand=100, lead_time=2, safety_stock=50, eoq=224))
+print(result.reorder_point, result.suggestion)
+
+# 复合接口（三个模板协作）
+rop = from_eoq_and_safety_stock(
+    avg_demand=100, lead_time=2,
+    eoq_result=eoq_result,
+    safety_stock_result=ss_result,
+)
+```
+
+#### 模板匹配
+
+```python
+from src.domain.template_matcher import match_template, match_with_fallback, TemplateType
+
+result = match_template("帮我算 EOQ，年需求 1000")
+# → TemplateType.EOQ, confidence=2.0, matched_keywords=["eoq"]
+
+result = match_with_fallback("xyz")
+# → TemplateType.UNKNOWN, matched_keywords=["EOQ（经济订货批量）", ...]
+```
+
+#### 参数提取
+
+```python
+from src.domain.param_extractor import extract_params, extract_params_for_template, describe_missing_params
+
+params = extract_params("年需求1000，订货成本50，持有成本2")
+# → {"annual_demand": 1000.0, "ordering_cost": 50.0, "holding_cost": 2.0}
+
+# 模板定向提取
+eoq_params = extract_params_for_template("年需求1000 服务水平95%", TemplateType.EOQ)
+# → {"annual_demand": 1000.0} (过滤不相关参数)
+
+# 必填参数检查
+missing = describe_missing_params(TemplateType.EOQ, eoq_params)
+# → ["订货成本", "持有成本"]
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/domain/templates/demand_forecast.py` | ~280 | 4 种预测算法 + auto + 精度评估 |
+| `src/domain/templates/safety_stock.py` | ~260 | 3 种 SS 公式 + Z 分位数 |
+| `src/domain/templates/reorder_point.py` | ~190 | ROP + 复合接口 + 规则建议 |
+| `src/domain/template_matcher.py` | ~160 | 多关键词打分意图分类 |
+| `src/domain/param_extractor.py` | ~250 | 正则数值提取 + 别名映射 |
+| `tests/test_demand_forecast.py` | ~320 | 20 测试 |
+| `tests/test_safety_stock.py` | ~310 | 18 测试 |
+| `tests/test_reorder_point.py` | ~280 | 17 测试 |
+| `tests/test_template_matcher.py` | ~220 | 21 测试 |
+| `tests/test_param_extractor.py` | ~320 | 30 测试 |
+| `tests/test_e2e_week4.py` | ~320 | 8 测试（4 LLM + 4 直接） |
+
+### 更新文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/domain/__init__.py` | 8 → 26 符号导出 |
+| `src/agent/nodes/prompts/coder.md` | 新增第 5 级供应链模板 + 字段白名单 |
+| `DEV_LOG.md` | Day 1-6 开发记录 + 本总结 |
+
+### 回退点
+
+`git commit 当前状态`（Week 4 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day1 — 供应链库存分析一键流水线
+
+### 目标
+
+实现 [src/domain/templates/inventory_pipeline.py](src/domain/templates/inventory_pipeline.py) — 将数据读取 → 质量检查 → 需求预测 → EOQ → 安全库存 → 补货点 → 图表 → 报告 封装为一条调用，构建从原始数据到决策建议的端到端闭环。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 8 步严格顺序，每步 try/except 包裹不中断后续 | 确保部分失败仍能生成报告，符合"best effort"原则 |
+| 数据粒度检测：计算相邻日期差值中位数 → 匹配月/周/日 | 自动推断而非让用户指定，降低使用门槛 |
+| 年需求推断：total_demand / n * 周期因子 | 从任意长度历史数据归一化到年需求 |
+| 月均需求 = 年需求 / 12（而非直接用原始列均值） | 统一标准，即使原始数据不是月粒度也能正确计算 |
+| 报告生成分离为 `_build_inventory_report` | 纯函数，无副作用，便于单独测试和扩展 |
+| 图表输出到 `output_dir/charts/` 子目录 | 与 data_analysis 模板的 reports/charts/ 保持一致 |
+
+### 接口契约
+
+```python
+# 主入口
+result = run_inventory_pipeline(InventoryPipelineParams(
+    csv_path="data/demand.csv", time_col="month", demand_col="demand",
+    ordering_cost=100.0, holding_cost_rate=0.2, unit_cost=10.0,
+    service_level=95.0, lead_time=1.0, forecast_periods=3, output_dir="reports/",
+))
+# → InventoryPipelineResult(report_path, forecast_result, eoq_result,
+#     safety_stock_result, rop_result, quality_report, charts)
+
+# 便捷入口
+result = quick_analyze("data/demand.csv")  # 使用全部默认值
+
+# 导出别名
+run = run_inventory_pipeline  # 符合项目 convention
+```
+
+### 复用的已有模块（零重复实现）
+
+| 模块 | 调用 |
+|------|------|
+| `data_quality.run_quality_check(df)` | 4 维度质量检测 |
+| `demand_forecast.auto_forecast(history, periods)` | 自动选择最优预测方法 |
+| `inventory_eoq.calculate(EOQParams(...))` | EOQ 计算 |
+| `safety_stock.calculate_safety_stock(SafetyStockParams(...))` | 安全库存（情况 A） |
+| `reorder_point.calculate(ROPParams(...))` | 补货点 + 规则建议 |
+| `chart_templates.line_chart / bar_chart` | 需求趋势 + 参数对比图 |
+
+### 测试覆盖
+
+- 文件：[tests/test_inventory_pipeline.py](tests/test_inventory_pipeline.py)
+- 用例数：**22**（覆盖 15 大场景 + 7 额外边界）
+- 覆盖率：
+  - ✅ 黄金路径（24 期月数据，8 步全部成功）
+  - ✅ 数据粒度检测（月/周/日 + 默认月 2 边界）
+  - ✅ 年需求推断（月/周/日 + 空 0 行）
+  - ✅ 自定义参数覆盖（ordering_cost=200 → EOQ 变化）
+  - ✅ 图表文件生成（非空 + 文件存在）
+  - ✅ 报告 8 章节完整性
+  - ✅ 列名不存在 → 空结果（time_col / demand_col 分别）
+  - ✅ 空 CSV → forecast_result=None 但质量检查继续
+  - ✅ 单期数据 → forecast_result=None，EOQ/SS/ROP 继续
+  - ✅ quick_analyze 便捷入口
+  - ✅ run 别名可调用
+  - ✅ 图表失败不中断流水线（验证其他步骤结果保留）
+
+### 运行结果
+
+```
+22 passed in 2.29s
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/domain/templates/inventory_pipeline.py` | ~340 | 8 步流水线 + 数据粒度检测 + 报告生成 |
+| `tests/test_inventory_pipeline.py` | ~340 | 22 测试 |
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 1 完成基线）
