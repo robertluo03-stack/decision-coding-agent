@@ -281,6 +281,7 @@ def quick_safety_stock(avg_demand: float, demand_std: float,
 4. 创建 tests/test_safety_stock.py 并运行 `python -m pytest tests/test_safety_stock.py -v`
 5. 确保 13/13 通过
 6. 不修改任何其他文件
+7. 仿照DEV_LOG.md的结构，将这次开发记录到DEV_LOG.md末尾中
 ```
 
 ---
@@ -408,6 +409,7 @@ def from_eoq_and_safety_stock(
 4. 创建 tests/test_reorder_point.py 并运行 `python -m pytest tests/test_reorder_point.py -v`
 5. 确保 11/11 通过
 6. 不修改任何其他文件
+7. 仿照DEV_LOG.md的结构，将这次开发记录到DEV_LOG.md末尾中
 ```
 
 ---
@@ -658,6 +660,7 @@ test_param_extractor.py 场景（~18 个）：
 4. 分别创建测试文件并运行
 5. 确保 template_matcher 12/12 通过，param_extractor 18/18 通过
 6. 不修改任何其他文件
+7. 仿照DEV_LOG.md的结构，将这次开发记录到DEV_LOG.md末尾中
 ```
 
 ---

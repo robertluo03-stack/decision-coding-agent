@@ -699,3 +699,130 @@ class ForecastResult:
 ### 回退点
 
 `git commit 当前状态`（若需回退到 Week3 基线：`1837504`）
+
+---
+
+## 2026-07-07 Week4-Day2 — 安全库存模板 (safety_stock)
+
+### 目标
+
+实现 `src/domain/templates/safety_stock.py`，基于服务水平法（概率需求理论）计算安全库存，替代原有 Z 表查表骨架，改用 scipy.stats.norm.ppf 精确计算 Z 分位数。
+
+### 实现内容
+
+#### 数据模型
+
+```python
+@dataclass
+class SafetyStockParams:
+    avg_demand: float           # 平均需求量（> 0）
+    demand_std: float           # 需求标准差（≥0）
+    lead_time: float            # 平均提前期（≥0）
+    lead_time_std: float = 0.0  # 提前期标准差（默认 0 = 固定）
+    service_level: float = 0.95 # 服务水平（支持 0.95 或 95）
+
+@dataclass
+class SafetyStockResult:
+    safety_stock: float         # 安全库存量
+    reorder_point_component: float  # 提前期需求 = avg_demand × lead_time
+    z_score: float              # 标准正态分位数
+    service_level: float        # 标准化后的服务水平（0-1）
+    formula_used: str           # 使用公式的中文描述
+    assumptions: list[str]      # 计算假设说明
+```
+
+#### 核心算法（3 种公式自动选择）
+
+| 场景 | 条件 | 公式 |
+|------|------|------|
+| **情况 A** | lead_time_std=0, demand_std>0 | SS = Z × σ_d × √LT |
+| **情况 B** | demand_std=0, lead_time_std>0 | SS = Z × d̄ × σ_LT |
+| **情况 C** | 两者皆 > 0 | SS = Z × √(LT×σ_d² + d̄²×σ_LT²) |
+| **完全确定** | 两者皆为 0 | SS = 0 |
+
+#### Z 分位数计算
+
+- 使用 `scipy.stats.norm.ppf(service_level)` 精确计算（scipy 已在项目依赖中）
+- 替代原有 7 级 Z 表查表（SERVICE_LEVEL_Z 字典），支持任意服务水平
+- 常见参考值：90%→1.2816, 95%→1.6449, 99%→2.3263
+
+#### 服务水平标准化
+
+- `sl > 1` → 除以 100（95 → 0.95）
+- `sl ∈ (0, 1]` → 保持不变
+- `sl ≤ 0 or > 100` → ValueError
+
+#### 参数校验（6 项）
+
+| 校验项 | 条件 | 错误信息 |
+|--------|------|---------|
+| avg_demand | ≤ 0 | "平均需求必须 > 0" |
+| demand_std | < 0 | "需求标准差不能为负" |
+| lead_time | < 0 | "提前期不能为负" |
+| lead_time_std | < 0 | "提前期标准差不能为负" |
+| service_level | ≤ 0 or > 100 | "服务水平必须在 (0, 100] 之间" |
+
+#### 便捷入口
+
+```python
+quick_safety_stock(avg_demand, demand_std, lead_time, service_level)
+# → 默认为情况 A（提前期固定），覆盖最常见业务场景
+```
+
+### 测试覆盖
+
+`tests/test_safety_stock.py` — 18 个测试场景：
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 95% 服务水平 + 需求波动 → 情况 A，Z≈1.645 | ✅ |
+| 2 | 99% 服务水平 → Z≈2.326 | ✅ |
+| 3 | 90% 服务水平 → Z≈1.282 | ✅ |
+| 4 | 输入 95（自动标准化为 0.95） | ✅ |
+| 5 | 需求 + 提前期皆波动 → 情况 C（平方和开根） | ✅ |
+| 6 | 仅提前期波动 → 情况 B | ✅ |
+| 7 | 完全确定（两个 std=0）→ SS=0 | ✅ |
+| 8 | 零标准差边界 — 不报错 | ✅ |
+| 9 | avg_demand=0 → ValueError | ✅ |
+| 10 | service_level=0 → ValueError | ✅ |
+| 11 | service_level=150 → ValueError | ✅ |
+| 12 | 负标准差 → ValueError (demand_std + lead_time_std) | ✅ |
+| 13 | run 别名可调用 | ✅ |
+| 14 | quick_safety_stock 便捷入口 | ✅ |
+| 15 | _normalize_service_level 单元测试 | ✅ |
+| 16 | _compute_z_score 单元测试 | ✅ |
+| 17 | lead_time=0 边界（SS=0） | ✅ |
+
+**结果**：18/18 全部通过，0 回归。
+
+### 与旧版差异
+
+| 维度 | 旧版（骨架） | 新版 |
+|------|-------------|------|
+| Z 分位数 | 7 级硬编码查表（SERVICE_LEVEL_Z） | scipy.stats.norm.ppf 精确计算 |
+| 公式场景 | 仅情况 A | 3 种公式自动选择 + 完全确定 |
+| 提前期波动 | 不支持 | 支持（情况 B / C） |
+| 服务水平输入 | 仅 0-1 | 支持百分数（95→0.95） |
+| 结果字段 | 3 个（z_score, safety_stock, reorder_point） | 6 个（含 formula_used, assumptions 等） |
+| 参数校验 | 无 | 6 项完整校验 |
+
+### Benchmark
+
+| 指标 | 值 |
+|------|----|
+| 新增模板 | 1（safety_stock） |
+| 新增测试 | 18 |
+| 累计测试（Week4 累计） | 38（20 + 18） |
+| 项目累计测试 | 293（255 + 38） |
+| 测试通过率 | 100% |
+| 新增依赖 | 0（scipy 已在 pyproject.toml） |
+| 代码行数 | ~160 行（含 docstring） |
+
+### 踩坑记录
+
+- **浮点精度**：`_normalize_service_level(99.9)` 返回 `0.9990000000000001`，测试用 `math.isclose(rel_tol=1e-9)` 而非 `==`
+- **safety_stock 已 round(2)**：测试端对比时需 `round(expected, 2)` 后再用 `math.isclose`，避免 1e-16 级差异
+
+### 回退点
+
+`git commit 当前状态`
