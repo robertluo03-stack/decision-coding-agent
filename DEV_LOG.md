@@ -959,3 +959,145 @@ from_eoq_and_safety_stock(
 ### 回退点
 
 `git commit 当前状态`
+
+---
+
+## 2026-07-07 Week4-Day4 — 模板匹配器 + 参数提取器
+
+### 目标
+
+实现模板匹配器（`template_matcher.py`）和参数提取器（`param_extractor.py`），作为领域模板层的"大脑"——让用户能通过自然语言调用供应链模板，无需手动构造 Params 对象。
+
+设计理念：**规则化，零 LLM**。与 data_analysis 的结论引擎一致——零延迟、零成本、100% 可预测。
+
+### 实现内容
+
+#### template_matcher.py — 多关键词加权打分
+
+**意图分类**：6 种 `TemplateType` 枚举（EOQ / FORECAST / SAFETY_STOCK / REORDER_POINT / DATA_ANALYSIS / UNKNOWN）
+
+**匹配算法**：
+- 5 个模板各配置 10-12 个 (关键词, 权重) 对
+- 关键词在 query 中出现则累加权重（同一词多次出现只计一次）
+- 取总分最高的模板；若最高分 < 阈值 1.5 → UNKNOWN
+- 平局按命中关键词数更具体的优先
+
+**关键词设计原则**：
+- 中文核心词权重最高（如"经济订货"2.5 > "eoq"2.0）
+- 英文/缩写偏低权（如"reorder"1.5 < "补货点"2.5）
+- 通用词低权（"分析"1.5）避免误匹配
+
+**输出**：`MatchResult` 含 template_type / confidence / matched_keywords / all_scores
+
+```python
+match_template("帮我算 EOQ，年需求 1000")  → TemplateType.EOQ, conf=2.0
+match_with_fallback("blah")                → TemplateType.UNKNOWN + 推荐模板列表
+```
+
+#### param_extractor.py — 正则 + 别名匹配
+
+**数值提取**（3 种模式）：
+- 整数 `r'(\d+)'` + 小数 `r'(\d+\.\d+)'` + 百分比 `r'(\d+\.?\d*)\s*%'`
+- 小数优先于整数（避免"2.5"拆为"2"和"5"）
+
+**参数名匹配**（17 个标准参数 × 平均 5 个别名 = ~85 个别名）：
+- 核心创新：**距离优先评分**——取数值前 15 字符为上下文窗口，别名离数值越近得分越高，长度相同才用长度做次级排序
+- 支持中英文混用（"annual demand"→"annual_demand"）、变体（"订货费"/"订货成本"/"order cost"→"ordering_cost"）
+- 同一参数多次出现 → 取第一次
+
+```python
+extract_params("年需求1000，订货成本50，持有成本2")
+# → {"annual_demand": 1000, "ordering_cost": 50, "holding_cost": 2}
+
+extract_params("服务水平 95%")
+# → {"service_level": 95.0}
+
+extract_params_for_template("年需求1000 提前期 2", TemplateType.EOQ)
+# → {"annual_demand": 1000}  (过滤不相关参数)
+
+describe_missing_params(TemplateType.EOQ, {"annual_demand": 1000})
+# → ["订货成本", "持有成本"]
+```
+
+**模板必填参数映射**：
+
+| 模板 | 必填参数 |
+|------|---------|
+| EOQ | annual_demand, ordering_cost, holding_cost |
+| SAFETY_STOCK | avg_demand, demand_std, lead_time, service_level |
+| REORDER_POINT | avg_demand, lead_time, safety_stock |
+| FORECAST | (空 — history 无法从 NL 提取) |
+
+### 模板调用完整流水线
+
+```
+用户自然语言
+    │
+    ├─→ template_matcher.match_template()  → TemplateType
+    │       │
+    ├─→ param_extractor.extract_params()   → {param: value}
+    │       │
+    └─→ domain.templates.{template}.run()  → Result
+```
+
+### 测试覆盖
+
+#### tests/test_template_matcher.py — 21 个测试
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1-2 | EOQ 中/英文匹配 | ✅ |
+| 3-4 | FORECAST 匹配 | ✅ |
+| 5-6 | SAFETY_STOCK 中/英文匹配 (buffer stock) | ✅ |
+| 7-8 | REORDER_POINT 中/英文匹配 | ✅ |
+| 9 | DATA_ANALYSIS 匹配 | ✅ |
+| 10-11 | UNKNOWN（无关 query + 空字符串） | ✅ |
+| 12 | 混合关键词 → 最高分胜出 | ✅ |
+| 13 | 大小写不敏感 | ✅ |
+| 14-15 | match_with_fallback（已知/未知） | ✅ |
+| 16 | run 别名 | ✅ |
+| 17-21 | 附加：all_scores / matched_keywords / _score_query / 枚举完备性 | ✅ |
+
+#### tests/test_param_extractor.py — 30 个测试
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 中文 EOQ 三参数全提取 | ✅ |
+| 2 | 英文别名识别 | ✅ |
+| 3 | 百分比 "95%" → 95.0 | ✅ |
+| 4 | 小数 "0.95" → 0.95 | ✅ |
+| 5 | avg_demand + demand_std（距离优先） | ✅ |
+| 6 | lead_time 中/英文 | ✅ |
+| 7 | "订货费"+"库存持有成本"变体 | ✅ |
+| 8 | "需求 500 成本 30" 映射测试 | ✅ |
+| 9-10 | 空 query / 数字无参数名 | ✅ |
+| 11 | 小数 "2.5" | ✅ |
+| 12 | extract_params_for_template 过滤 | ✅ |
+| 13-15 | describe_missing_params (0/1/3) | ✅ |
+| 16 | 中文逗号分隔 | ✅ |
+| 17 | "万"单位 — 仅提取数字 | ✅ |
+| 18 | 同名参数取第一次 | ✅ |
+| 19 | run 别名 | ✅ |
+| 20-30 | 附加：_find_all_numbers / _lookup_param_name / 别名完整性 / FORECAST/UNKNOWN 的必填参数 | ✅ |
+
+### Benchmark
+
+| 指标 | 值 |
+|------|----|
+| 新增模块 | 2（template_matcher + param_extractor） |
+| 新增测试 | 51（21 + 30） |
+| Week4 累计新增模板/模块 | 5 |
+| Week4 累计新增测试 | 106（20+18+17+51） |
+| 项目累计测试 | **361**（255 + 106） |
+| 全量回归 | **319/319 通过**，零回归 |
+| 新增依赖 | 0 |
+| 代码行数 | ~220 + ~250 = ~470 行（含 docstring） |
+
+### 踩坑记录
+
+- **别名距离优先是关键**："平均需求 100，标准差 20"中"标准差"别名 length=3 离数字"20"距离=0，"平均需求" length=4 距离=4——若只按长度排序"平均需求"会错误捕获"20"。解决方案：主排序 = 距离（离数字越近越优先），副排序 = 长度（距离相同时更长更具体优先）。
+- **数据驱动设计**：PARAM_ALIASES 和 KEYWORDS 作为模块级 dict 而非硬编码逻辑，新增模板只需添加新条目即可。
+
+### 回退点
+
+`git commit 当前状态`
