@@ -31,6 +31,7 @@ from src.domain.templates.safety_stock import (
     SafetyStockResult,
 )
 from src.domain.templates.reorder_point import calculate as calc_rop, ROPParams, ROPResult
+from src.domain.report_enhancer import enhance_report as _enhance_report, build_enhancer_input
 
 
 # ---------------------------------------------------------------------------
@@ -292,17 +293,10 @@ def _build_inventory_report(
         lines.append("（补货点计算未执行或失败）")
     lines.append("")
 
-    # ---- 7. 综合建议 ----
+    # ---- 7. 综合建议 （占位，将由增强模块替换） ----
     lines.append("## 7. 综合建议")
     lines.append("")
-    if result.rop_result is not None and result.eoq_result is not None:
-        lines.append(
-            f"基于以上分析，建议采用 (ROP, Q) 库存策略："
-            f"当库存降至 **{result.rop_result.reorder_point:.0f}** 时触发补货，"
-            f"每次订货量为 **{result.eoq_result.eoq:.0f}** 件。"
-        )
-    else:
-        lines.append("基于以上分析，建议采用 (ROP, Q) 库存策略。")
+    lines.append("（将由增强模块根据分析结果生成详细建议）")
     lines.append("")
 
     # ---- 8. 附录 ----
@@ -555,11 +549,27 @@ def run_inventory_pipeline(
     # ---- Step 8: 报告生成 ----
     logger.info("Step 8/8: 报告生成...")
     try:
-        report_md = _build_inventory_report(result, params, df)
+        base_report = _build_inventory_report(result, params, df)
+
+        # 增强报告（仅当所有核心步骤都有结果时）
+        all_core_ok = all([
+            result.forecast_result is not None,
+            result.eoq_result is not None,
+            result.safety_stock_result is not None,
+            result.rop_result is not None,
+        ])
+        if all_core_ok:
+            logger.info("所有核心步骤完成，使用报告增强器...")
+            info = build_enhancer_input(result)
+            final_report = _enhance_report(base_report, info)
+        else:
+            logger.info("部分步骤失败，跳过增强，使用基础报告")
+            final_report = base_report
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_filename = f"report_inventory_{timestamp}.md"
         report_path = str(Path(params.output_dir) / report_filename)
-        Path(report_path).write_text(report_md, encoding="utf-8")
+        Path(report_path).write_text(final_report, encoding="utf-8")
         result.report_path = report_path
         logger.info(f"报告已写入: {report_path}")
     except Exception as e:

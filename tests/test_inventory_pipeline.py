@@ -140,9 +140,9 @@ def tmp_output_dir():
 
 
 class TestGoldenPath:
-    """场景 1：黄金路径 — 24 期月数据，8 步全部成功。"""
+    """场景 1：黄金路径 — 24 期月数据，8 步全部成功，报告被增强。"""
 
-    def test_golden_path(self, monthly_csv_24, tmp_output_dir):
+    def test_golden_path_enhanced_report(self, monthly_csv_24, tmp_output_dir):
         params = InventoryPipelineParams(
             csv_path=monthly_csv_24,
             time_col="month",
@@ -168,6 +168,16 @@ class TestGoldenPath:
         # 质量报告非 None
         assert result.quality_report is not None
         assert "overall_score" in result.quality_report
+
+        # 报告被增强，含增强章节
+        report_text = Path(result.report_path).read_text(encoding="utf-8")
+        assert "## 7. 模型假设" in report_text
+        assert "## 8. 局限性与风险提示" in report_text
+        assert "## 9. 业务建议" in report_text
+        # 原附录顺延为第 10 章
+        assert "## 10. 附录" in report_text
+        # 原占位不应出现
+        assert "由增强模块" not in report_text
 
 
 class TestGranularityDetection:
@@ -262,9 +272,9 @@ class TestChartsGeneration:
 
 
 class TestReportStructure:
-    """场景 8：报告 8 章节完整性。"""
+    """场景 8：报告增强后章节完整性 — 含增强章节 + 附录顺延。"""
 
-    def test_report_8_sections(self, monthly_csv_24, tmp_output_dir):
+    def test_report_sections_after_enhance(self, monthly_csv_24, tmp_output_dir):
         params = InventoryPipelineParams(
             csv_path=monthly_csv_24,
             output_dir=tmp_output_dir,
@@ -279,8 +289,10 @@ class TestReportStructure:
             "## 4. EOQ 经济订货批量分析",
             "## 5. 安全库存分析",
             "## 6. 补货点决策",
-            "## 7. 综合建议",
-            "## 8. 附录",
+            "## 7. 模型假设",             # enhancer 插入
+            "## 8. 局限性与风险提示",      # enhancer 插入
+            "## 9. 业务建议",             # enhancer 插入
+            "## 10. 附录",                # 原 8. 附录 顺延
         ]
         for section in expected_sections:
             assert section in report_text, f"Missing section: {section}"
@@ -334,7 +346,7 @@ class TestEdgeCases:
             Path(csv_path).unlink(missing_ok=True)
 
     def test_single_period(self, tmp_output_dir):
-        """单期数据：forecast_result=None，但其他步骤继续。"""
+        """单期数据：forecast_result=None，但其他步骤继续，报告不增强。"""
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False, encoding="utf-8"
         ) as f:
@@ -355,6 +367,11 @@ class TestEdgeCases:
             assert result.safety_stock_result is not None
             assert result.rop_result is not None
             assert result.quality_report is not None
+
+            # Partial failure: forecast missing → no enhancement
+            report_text = Path(result.report_path).read_text(encoding="utf-8")
+            assert "## 7. 模型假设" not in report_text
+            assert "（将由增强模块根据分析结果生成详细建议）" in report_text
         finally:
             Path(csv_path).unlink(missing_ok=True)
 

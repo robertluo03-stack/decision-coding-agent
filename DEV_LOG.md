@@ -1621,3 +1621,107 @@ run = enhance_report
 ### 回退点
 
 `git commit 当前状态`（Week 5 Day 2 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day3 — Planner Prompt 新增供应链库存分析场景
+
+### 目标
+
+更新 [src/agent/nodes/prompts/planner.md](src/agent/nodes/prompts/planner.md)，新增 2 个供应链库存分析场景示例和场景识别指南，使 Planner 能正确区分数据分析类任务和供应链库存分析类任务并生成不同长度的 plan。
+
+### 变更明细
+
+| 维度 | 变更前 | 变更后 |
+|------|--------|--------|
+| 示例数 | 3 个（sales.csv 数据分析） | 5 个（+2 供应链场景） |
+| 背景需求类型 | 4 类 | 5 类（+"供应链库存分析"） |
+| 步骤约束 | 统一 ≤5 步 | 数据分析 ≤5 步，供应链 ≤7 步 |
+| 最后一步约束 | 始终"生成报告" | 数据分析→生成报告，纯计算→打印/输出结果 |
+| 场景识别指南 | 无 | 3 类匹配规则（数据文件+供应链关键词/纯参数/纯数据分析） |
+
+### 新增示例
+
+**示例 4（长 plan，7 步）**：数据驱动完整闭环
+- 输入：`"分析我的库存数据 inventory.csv，预测未来需求并给出订货建议"`
+- Plan：探索数据结构 → 质量检查 → 预测 → EOQ → 安全库存 → 补货点 → 报告
+
+**示例 5（短 plan，5 步）**：纯参数直接计算
+- 输入：`"年需求 5000，订货成本 100，持有成本率 20%，单位成本 50，帮我算 EOQ 和安全库存"`
+- Plan：提取参数 → 计算持有成本 → EOQ → 安全库存 → 打印结果
+
+### 场景识别指南
+
+- 数据文件名 + 供应链关键词 → inventory.csv 示例的长 plan（≤7 步）
+- 仅供应链参数无文件名 → 纯参数示例的短 plan（≤5 步）
+- 仅数据分析关键词无供应链关键词 → sales.csv 示例（≤5 步）
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 3 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day4 — inventory_pipeline 集成 report_enhancer
+
+### 目标
+
+更新 [src/domain/templates/inventory_pipeline.py](src/domain/templates/inventory_pipeline.py)，在 Step 8（报告生成）集成 Day 2 实现的 report_enhancer，实现端到端闭环：基础报告 → 自动增强 → 写入文件。
+
+### 变更明细
+
+**1. 新增导入**
+
+```python
+from src.domain.report_enhancer import enhance_report as _enhance_report, build_enhancer_input
+```
+
+**2. `_build_inventory_report()` 第 7 章改为占位**
+
+```diff
+- if result.rop_result is not None and result.eoq_result is not None:
+-     lines.append("基于以上分析，建议采用 (ROP, Q) 库存策略：...")
+- else:
+-     lines.append("基于以上分析，建议采用 (ROP, Q) 库存策略。")
++ lines.append("（将由增强模块根据分析结果生成详细建议）")
+```
+
+**3. Step 8 报告生成集成增强逻辑**
+
+```python
+base_report = _build_inventory_report(result, params, df)
+
+# 仅当所有核心步骤都有结果时才增强
+all_core_ok = all([forecast, eoq, safety_stock, rop])
+if all_core_ok:
+    info = build_enhancer_input(result)
+    final_report = _enhance_report(base_report, info)
+else:
+    final_report = base_report  # 部分步骤失败，跳过增强
+```
+
+### 测试更新
+
+| 测试 | 变更 |
+|------|------|
+| `test_golden_path` → `test_golden_path_enhanced_report` | 新增增强章节 assertion（模型假设/局限性/业务建议/附录顺延为第10章） |
+| `test_report_8_sections` → `test_report_sections_after_enhance` | 更新预期章节列表从 8→10 章 |
+| `test_single_period` | 新增“部分失败不增强”断言（forecast=None → 无增强章节 + 占位保留） |
+
+### 运行结果
+
+```
+22 passed in 2.24s（本模块）
+369 passed, 零回归（全量）
+```
+
+### 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/domain/templates/inventory_pipeline.py` | 新增 import + 第 7 章占位 + Step 8 增强集成 |
+| `tests/test_inventory_pipeline.py` | 更新 3 个测试（增强章节 + 不增强边界） |
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 4 完成基线）
