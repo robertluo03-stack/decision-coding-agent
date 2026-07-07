@@ -1531,3 +1531,93 @@ run = run_inventory_pipeline  # 符合项目 convention
 ### 回退点
 
 `git commit 当前状态`（Week 5 Day 1 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day2 — 供应链报告增强器
+
+### 目标
+
+实现 [src/domain/report_enhancer.py](src/domain/report_enhancer.py) —— 将 inventory_pipeline 生成的报告中第 7 章"综合建议"占位符，替换为专业的模型假设说明、局限性与风险提示、业务改进建议三个增强章节。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 零 LLM，纯 if-else 规则引擎 | 与 data_analysis 结论引擎、reorder_point 建议引擎一致 |
+| 规则条件引擎 `_check()` 支持复合 AND/OR | 满足"mape > 10 and mape <= 20"等复杂条件 |
+| 模板占位符 `{mape:.1f}` 格式化 | 将规则模板中的字段名动态替换为实际值 |
+| `build_enhancer_input()` 从 pipeline result 自动提取信息 | 降低调用者负担，零手动转换 |
+| 报告插入逻辑替换原第 7 章并顺延附录为第 10 章 | 保持报告结构整洁 |
+
+### 接口契约
+
+```python
+from src.domain.report_enhancer import enhance_report, EnhancerInput, build_enhancer_input
+
+# 方式 1：手动构建输入
+info = EnhancerInput(history_length=24, mape=8.5, eoq=223.6, ...)
+enhanced = enhance_report(base_md, info)
+
+# 方式 2：从 pipeline result 自动构建
+info = build_enhancer_input(pipeline_result)
+enhanced = enhance_report(base_md, info)
+
+# 导出别名
+run = enhance_report
+```
+
+### 规则体系
+
+| 规则组 | 数量 | 示例触发条件 |
+|--------|------|-------------|
+| RULES_ASSUMPTIONS | 10 | formula_used contains '情况 C' → "需求和提前期均存在波动" |
+| RULES_LIMITATIONS | 10 | history_length < 6 → "数据量较少，预测置信度较低" |
+| RULES_RECOMMENDATIONS | 10 | eoq > 1000 → "建议评估分批采购" |
+
+### 条件引擎 `_check(condition, info)`
+
+支持：
+- `key is None` / `key is not None`
+- `key > value` / `key < value` / `key >= value` / `key <= value`
+- `key contains 'text'`
+- `cond1 and cond2` / `cond1 or cond2`
+- 复合 RHS 数学表达式：`annual_demand / 12 * 3`（通过 `_eval_math_expression` AST 安全求值）
+
+### 测试覆盖
+
+- 文件：[tests/test_report_enhancer.py](tests/test_report_enhancer.py)
+- 用例数：**34**（覆盖 14 大场景 + 20 辅助函数单元测试）
+- 覆盖率：
+  - ✅ 全部规则触发（极端数据，≥3 条/类）
+  - ✅ 短历史 / 长历史
+  - ✅ 高 MAPE / 低 MAPE
+  - ✅ 高 EOQ / 低安全库存比 / 高安全库存比
+  - ✅ 情况 A / 情况 C 公式
+  - ✅ 有异常值
+  - ✅ 报告插入位置正确（章节编号 + 顺延）
+  - ✅ 无第 7 章时追加末尾
+  - ✅ 空 info 不报错
+  - ✅ run 别名可调用
+  - ✅ `_check` 8 种运算
+  - ✅ `_format_template` 3 种格式
+  - ✅ `_eval_math_expression` 3 种表达式
+  - ✅ `build_enhancer_input` 正常 / 空
+
+### 运行结果
+
+```
+34 passed in 1.20s（本模块）
+369 passed in 83.63s（全量，零回归）
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/domain/report_enhancer.py` | ~420 | 规则引擎 + 三章节生成 + 报告插入 |
+| `tests/test_report_enhancer.py` | ~430 | 34 测试 |
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 2 完成基线）
