@@ -826,3 +826,136 @@ quick_safety_stock(avg_demand, demand_std, lead_time, service_level)
 ### 回退点
 
 `git commit 当前状态`
+
+---
+
+## 2026-07-07 Week4-Day3 — 补货点（ROP）模板 (reorder_point)
+
+### 目标
+
+实现 `src/domain/templates/reorder_point.py`，计算补货点（Reorder Point），作为 EOQ + 安全库存的组合器和自然收尾，形成供应链库存三件套（EOQ + SS + ROP）。
+
+### 实现内容
+
+#### 数据模型
+
+```python
+@dataclass
+class ROPParams:
+    avg_demand: float           # 平均需求量（> 0）
+    lead_time: float            # 平均提前期（≥0）
+    safety_stock: float = 0.0   # 安全库存量（≥0）
+    eoq: float | None = None    # 经济订货批量（可选）
+
+@dataclass
+class ROPResult:
+    reorder_point: float        # 补货点 = lead_time_demand + safety_stock
+    lead_time_demand: float     # 提前期平均需求 = avg_demand × lead_time
+    safety_stock: float         # 安全库存量
+    eoq: float | None           # 经济订货批量
+    suggestion: str             # 规则化中文业务建议
+```
+
+#### 核心公式
+
+- `reorder_point = avg_demand × lead_time + safety_stock`
+- `lead_time_demand = avg_demand × lead_time`
+
+#### 规则化建议引擎 `_generate_suggestion()`（5 条规则）
+
+```
+基线：当库存降至 {ROP} 时触发补货；[订货量/建议EOQ]；组成说明。
+├── safety_stock=0 → 追加"建议评估需求波动风险"
+├── eoq 存在 → 追加"建议采用 (ROP, Q) 库存策略"
+└── eoq 不存在 → 追加"建议结合 EOQ 模型确定最优订货量"
+```
+
+零 LLM，纯 if-else，零延迟。
+
+#### 复合接口 `from_eoq_and_safety_stock()` — 模板间协作
+
+```python
+from_eoq_and_safety_stock(
+    avg_demand=100, lead_time=2,
+    eoq_result=EOQResult(eoq=223.61, ...),
+    safety_stock_result=SafetyStockResult(safety_stock=46.52, ...),
+) → ROPResult
+```
+
+展示模板间协作的设计亮点——EOQ 提供最优订货量，安全库存提供缓冲水平，ROP 将两者整合为补货决策。
+
+参数支持 `None`——可仅传 EOQ 或仅传 SS（哪方缺失哪方默认为 0）。
+
+#### 参数校验（3 项）
+
+| 校验项 | 条件 | 错误信息 |
+|--------|------|---------|
+| avg_demand | ≤ 0 | "平均需求必须 > 0" |
+| lead_time | < 0 | "提前期不能为负" |
+| safety_stock | < 0 | "安全库存不能为负" |
+
+`safety_stock=0` 是合法输入（确定性场景）。
+
+### 测试覆盖
+
+`tests/test_reorder_point.py` — 17 个测试场景：
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 正常计算 ROP | ✅ |
+| 2 | ROP 含 EOQ — eoq 字段正确传递 | ✅ |
+| 3 | ROP 不含 EOQ — eoq=None | ✅ |
+| 4 | safety_stock=0 — 建议含风险提示 | ✅ |
+| 5 | 复合接口 from_eoq_and_safety_stock | ✅ |
+| 6 | suggestion 包含补货点数字 | ✅ |
+| 7 | suggestion 含 EOQ 时提到订货量 + (ROP,Q) | ✅ |
+| 8 | suggestion 无 EOQ 时建议结合 EOQ | ✅ |
+| 9 | 零提前期 — lead_time_demand=0, rop=ss | ✅ |
+| 10 | 负 safety_stock → ValueError | ✅ |
+| 11 | run 别名可调用 | ✅ |
+| 12-13 | avg_demand=0 / 负 lead_time → ValueError | ✅ |
+| 14-15 | from_eoq_and_safety_stock 仅 EOQ / 仅 SS | ✅ |
+| 16 | suggestion 完整结构验证 | ✅ |
+| 17 | 大数值 — 不溢出 | ✅ |
+
+**结果**：17/17 全部通过，0 回归。
+
+### 三件套协作关系图
+
+```
+          EOQ                    SafetyStock
+    (inventory_eoq)           (safety_stock)
+          │                        │
+          ▼                        ▼
+       eoq  ◄────────────────── safety_stock
+          │                        │
+          └────────┬───────────────┘
+                   ▼
+           ROP = d̄×LT + SS
+         (reorder_point)
+                   │
+                   ▼
+            (ROP, Q) 库存策略
+```
+
+### Benchmark
+
+| 指标 | 值 |
+|------|----|
+| 新增模板 | 1（reorder_point） |
+| 新增测试 | 17 |
+| Week4 累计新增模板 | 3 |
+| Week4 累计新增测试 | 55（20 + 18 + 17） |
+| 项目累计测试 | **310**（255 + 55） |
+| 测试通过率 | 100% |
+| 新增依赖 | 0 |
+| 代码行数 | ~150 行（含 docstring） |
+
+### 踩坑记录
+
+- **前向引用**：`from_eoq_and_safety_stock` 的参数类型 `EOQResult | None` 和 `SafetyStockResult | None` 通过 `from __future__ import annotations` 处理为延迟求值字符串注解，避免循环导入。
+- **round(None)**：eoq 为 None 时 `round(None, 2)` 会报 TypeError，需先判断 `if params.eoq is not None` 再 round。
+
+### 回退点
+
+`git commit 当前状态`
