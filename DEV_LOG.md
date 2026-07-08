@@ -2082,3 +2082,192 @@ tests/test_ui_base.py: 15 passed in 0.33s
 
 `git commit 当前状态`（Week 6 Day 1 完成基线）
 
+---
+
+## 2026-07-08 Week6-Day2 — Graph 执行过程实时追踪
+
+### 目标
+
+实现 NodeTracer 包装器 + DebugPanel + Graph 集成 + main.py CLI，构建可选启用的执行过程实时追踪层。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 函数包装器模式 | 不修改节点文件（planner/coder 等），只替换 graph 组装阶段的引用 |
+| `build_graph(use_ui: bool = False)` | 默认保持 Week 5 行为，测试和现有调用零影响 |
+| NodeTracer 抛异常时 re-raise | 不吞异常，保证 LangGraph 路由逻辑正常运行 |
+| Debugger 特殊处理 | `enter_debug_mode` 切换右侧面板，红框突出，进度条标记为"完成" |
+| main.py 非 TTY 降级 | `--rich` + 非 TTY → UI 框架创建但不启动 Live，日志通过 print 输出 |
+
+### 实现内容
+
+#### tracer.py — NodeTracer + trace_graph_nodes
+
+```python
+class NodeTracer:
+    """单个节点执行追踪器。"""
+    __init__(ui, node_name)
+    trace(func) → Callable  # 包装：开始→运行中→完成/异常→日志
+
+trace_graph_nodes(ui_manager, {name: func}) → {name: traced_func}
+```
+
+内部逻辑：
+1. 调用前：`ui.update_node(node, "运行中", 0.0)` + `ui.log("[Node] 开始执行")`
+2. `t_start = time.perf_counter()`
+3. 成功：`ui.update_node(node, "完成", elapsed)` + 日志
+4. 异常：`ui.update_node(node, "错误", elapsed)` + 日志 + re-raise
+
+#### panels.py 新增 — DebugPanel
+
+```python
+class DebugPanel:
+    """调试模式面板，展示错误摘要 + 4 个选项。"""
+    activate(error, diagnosis)   # 激活
+    deactivate()                 # 关闭
+    active → bool                # 状态
+    get_renderable() → Group     # Markdown 错误信息 + 4 选项
+```
+
+#### UIManager 新增 — debug 模式
+
+```python
+enter_debug_mode(error: str, diagnosis: str)  # 入队 debug_enter 事件
+exit_debug_mode()                             # 入队 debug_exit 事件
+debug_mode → bool                             # 当前状态
+```
+
+`_build_renderable()` 在 debug 模式时右侧显示 `DebugPanel`（红框 + "🐛 调试模式"），否则显示 `LogPanel`（绿框）。
+
+`_handle_event()` 新增事件类型处理：
+- `"debug_enter"` → `_debug_mode = True` + `DebugPanel.activate()`
+- `"debug_exit"` → `_debug_mode = False` + `DebugPanel.deactivate()`
+
+#### graph.py 变更 — build_graph 签名扩展
+
+```python
+def build_graph(
+    use_ui: bool = False,
+    ui_manager: UIManager | None = None,
+) -> StateGraph:
+```
+
+变更内容（仅 2 处）：
+1. 获取节点函数后（`add_node` 之前），若 `use_ui=True` 且 `ui_manager` 不为 None，调用 `trace_graph_nodes` 包装 5 个节点
+2. 包装后的函数传给 `builder.add_node()` 而非原始函数
+
+**零侵入保证**：不修改 `_ensure_imports()` / 路由函数 / `run()` 便捷入口。
+
+#### main.py 变更 — `--rich` 参数支持
+
+```python
+use_rich = "--rich" in sys.argv or os.environ.get("USE_RICH", "").lower() == "true"
+```
+
+变更：
+1. `main()` 开头检测 `--rich` / `USE_RICH` 环境变量
+2. 若启用 Rich：创建 `UIManager` → `start()` → `build_graph(use_ui=True, ui_manager=ui)`
+3. 任务执行：`graph.invoke()` 调用（NodeTracer 自动推送状态）
+4. 结束后：`ui.stop()`
+5. 辅助函数：
+   - `_print_rich_mode_status()` — 状态提示
+   - `_print_rich_summary()` — 执行后摘要
+   - `_ensure_live_stopped_for_input()` / `_restart_live_for_input()` — Live 暂停恢复（避免干扰 input）
+
+### 测试覆盖
+
+`tests/test_ui_tracer.py` — 14 个测试场景：
+
+#### TestNodeTracer（5 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 包装后函数仍返回正确结果 | ✅ |
+| 2 | mock UIManager 验证 update_node 被调用（开始+完成） | ✅ |
+| 3 | mock 函数抛异常 → 状态变为"错误" + re-raise | ✅ |
+| 4 | 验证 log 被调用（至少 2 次） | ✅ |
+| 5 | 包装器 __name__ / __qualname__ 保留追踪信息 | ✅ |
+
+#### TestTraceGraphNodes（2 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 6 | 所有 5 个节点都被包装，键名不变 | ✅ |
+| 7 | 包装后函数仍调用原始函数并返回正确结果 | ✅ |
+
+#### TestGraphBuildWithUI（4 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 8 | `build_graph(use_ui=True)` 编译成功 | ✅ |
+| 9 | 默认 `build_graph()` 与 Week 5 一致（零回归） | ✅ |
+| 10 | `use_ui=False` 不注入 tracer | ✅ |
+| 11 | 无参数调用（旧签名）仍正常工作 | ✅ |
+
+#### TestUIManagerDebugMode（3 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 12 | `enter_debug_mode` / `exit_debug_mode` 正确切换 | ✅ |
+| 13 | debug 模式中 `update_node` 仍然正常工作 | ✅ |
+| 14 | 非 TTY 模式下 `enter_debug_mode` 不报错 | ✅ |
+
+### 运行结果
+
+```
+tests/test_ui_tracer.py: 14 passed in 0.89s
+tests/test_graph.py:      11 passed in 0.53s（零回归）
+全量回归 (excl Docker): 417 passed, 2 failed
+  └── 2 failed = test_e2e_week3.py::test_task_a_analysis_report_subprocess
+                 test_e2e_week3.py::test_task_c_text_to_sql_subprocess
+      → 已知限制：Debugger _safe_input() 与 pytest stdin 捕获冲突
+```
+                      
+### 验收对照
+
+| 验收项 | 状态 | 说明 |
+|--------|------|------|
+| `build_graph(use_ui=False)` 零回归 | ✅ | test_graph.py 11/11 |
+| `build_graph(use_ui=True)` 不抛异常 | ✅ | test_ui_tracer.py 覆盖 |
+| `main.py --rich` 编译成功 | ✅ | CompiledStateGraph |
+| `main.py` 不带 `--rich` 行为不变 | ✅ | `build_graph()` 无参调用不变 |
+| 全量回归 390+ 通过 | ✅ | 417 passed |
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/agent/ui/tracer.py` | ~90 | NodeTracer + trace_graph_nodes 函数包装器 |
+| `tests/test_ui_tracer.py` | ~220 | 14 个测试（tracer 5 + batch 2 + graph 4 + debug 3） |
+
+### 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/agent/ui/panels.py` | 新增 `DebugPanel` 类（~60 行）：activate/deactivate/get_renderable |
+| `src/agent/ui/manager.py` | 新增 `DebugPanel` 集成 + `enter_debug_mode` / `exit_debug_mode` / `debug_mode` |
+| `src/agent/ui/__init__.py` | 不变（面板类通过 manager 间接暴露） |
+| `src/agent/graph.py` | `build_graph(use_ui, ui_manager)` 签名扩展 + tracer 注入逻辑 |
+| `main.py` | `--rich` 参数检测 + UIManager 创建/启停 + 摘要函数拆分 |
+
+### 累计测试数
+
+| 阶段 | 测试数 |
+|------|--------|
+| Week 1-5 基线 | 390 |
+| Week 6 Day 1 | +15（→ 405） |
+| Week 6 Day 2 新增 | +14 |
+| Week 6 累计 | **419** |
+
+### 踩坑记录
+
+- **MagicMock spec 与 queue.Queue 不兼容**：`MagicMock(spec=UIManager)` 会创建带 spec 的 mock，`ui._queue = MagicMock()` 后 `queue.Queue` 方法被 shadow。解决方案：只 mock `update_node` / `log` 的行为，不依赖 `_drain_queue` 的消费逻辑。
+- **Rich Live.stop() / start() 配对**：`main.py` 中 `input()` 前 stop Live 避免终端 cursor 移动冲突，任务执行前 restart。需用 try/except 保护防止 Live 已关闭时抛异常。
+- **`from __future__ import annotations` 在 TYPE_CHECKING 导入前**：graph.py 中 `UIManager` 的 TYPE_CHECKING 导入需声明在 annotations 之后，否则 PEP 604 语法在运行时求值时报 TypeError。
+
+### 回退点
+
+`git commit 当前状态`（Week 6 Day 2 完成基线）
+
+

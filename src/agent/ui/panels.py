@@ -3,11 +3,14 @@
 ProgressPanel  — Rich Progress 进度条，5 个节点各一个 TaskID
 StatusTable   — Rich Table，列：节点名 | 状态 | 耗时 | 重试次数
 LogPanel      — Rich Group + Text，最多 50 条日志，自动截断
+DebugPanel    — Rich Panel + Markdown，展示错误摘要 + 4 个调试选项
 """
 
 from __future__ import annotations
 
 from rich.console import Group
+from rich.markdown import Markdown
+from rich.panel import Panel as RichPanel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 from rich.text import Text
@@ -142,3 +145,68 @@ class LogPanel:
         if not texts:
             texts.append(Text("（暂无日志）", style="dim"))
         return Group(*texts)
+
+
+class DebugPanel:
+    """调试模式面板，展示错误摘要 + 4 个选项。
+
+    使用 rich.panel.Panel + rich.markdown.Markdown 渲染。
+    在 UIManager 进入 debug 模式时替换右侧日志面板。
+    """
+
+    OPTIONS_TEXT: str = (
+        "**请选择操作：**\n\n"
+        "1. 🤖 AI 修复建议 — 接受 AI 生成的修复代码\n"
+        "2. ✏️ 自定义修复指令 — 输入手动修复指示\n"
+        "3. ⏭️ 跳过此错误 — 保持原代码继续\n"
+        "4. 🛑 中止执行 — 生成失败报告后退出"
+    )
+
+    def __init__(self) -> None:
+        """初始化空 debug 面板。"""
+        self._error: str = ""
+        self._diagnosis: str = ""
+        self._active: bool = False
+
+    def activate(self, error: str, diagnosis: str) -> None:
+        """进入 debug 模式，设置错误信息。
+
+        Args:
+            error: 错误消息摘要。
+            diagnosis: AI 诊断 / 规则诊断结果。
+        """
+        self._error = error
+        self._diagnosis = diagnosis
+        self._active = True
+
+    def deactivate(self) -> None:
+        """退出 debug 模式。"""
+        self._active = False
+        self._error = ""
+        self._diagnosis = ""
+
+    @property
+    def active(self) -> bool:
+        """是否处于 debug 模式。"""
+        return self._active
+
+    def get_renderable(self) -> Group:
+        """构建 debug 面板渲染对象。
+
+        Returns:
+            Rich Group 包含错误信息 + 诊断 + 选项，未激活时返回占位。
+        """
+        if not self._active:
+            return Group(
+                Text("（等待调试触发）", style="dim")
+            )
+        md_content = (
+            f"### ❌ 执行异常\n\n"
+            f"```\n{self._error[:500]}\n```\n\n"
+            f"### 🔍 诊断分析\n\n"
+            f"{self._diagnosis[:800]}\n\n"
+            f"---\n\n"
+            f"{self.OPTIONS_TEXT}"
+        )
+        md = Markdown(md_content)
+        return Group(md)

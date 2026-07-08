@@ -15,9 +15,16 @@
     route_after_debugger(state)  — Debugger 之后决定回到 Coder 还是进入 Reporter
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from langgraph.graph import END, StateGraph
 
 from src.agent.state import AgentState
+
+if TYPE_CHECKING:
+    from src.agent.ui.manager import UIManager
 
 # ---------------------------------------------------------------------------
 # 延迟导入节点函数，避免循环依赖
@@ -93,7 +100,10 @@ def route_after_debugger(state: AgentState) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_graph() -> StateGraph:
+def build_graph(
+    use_ui: bool = False,
+    ui_manager: UIManager | None = None,
+) -> StateGraph:
     """构建并编译 DecisionCoder 的 LangGraph StateGraph。
 
     节点:
@@ -109,6 +119,10 @@ def build_graph() -> StateGraph:
         debugger → route_after_debugger → coder | reporter
         reporter → END
 
+    Args:
+        use_ui: 是否启用 Rich 终端 UI 追踪（默认 False）。
+        ui_manager: UIManager 实例（use_ui=True 时必须提供）。
+
     Returns:
         编译后的 StateGraph Runnable
     """
@@ -121,12 +135,36 @@ def build_graph() -> StateGraph:
 
     builder = StateGraph(AgentState)
 
+    # ---- 获取节点函数（可能被 tracer 包装） ----
+    planner_fn = _planner_node
+    coder_fn = _coder_node
+    executor_fn = _executor_node
+    debugger_fn = _debugger_node
+    reporter_fn = _reporter_node
+
+    if use_ui and ui_manager is not None:
+        from src.agent.ui.tracer import trace_graph_nodes
+
+        node_funcs = {
+            "Planner": planner_fn,
+            "Coder": coder_fn,
+            "Executor": executor_fn,
+            "Debugger": debugger_fn,
+            "Reporter": reporter_fn,
+        }
+        traced = trace_graph_nodes(ui_manager, node_funcs)
+        planner_fn = traced["Planner"]
+        coder_fn = traced["Coder"]
+        executor_fn = traced["Executor"]
+        debugger_fn = traced["Debugger"]
+        reporter_fn = traced["Reporter"]
+
     # ---- 注册节点 ----
-    builder.add_node("planner", _planner_node)
-    builder.add_node("coder", _coder_node)
-    builder.add_node("executor", _executor_node)
-    builder.add_node("debugger", _debugger_node)
-    builder.add_node("reporter", _reporter_node)
+    builder.add_node("planner", planner_fn)
+    builder.add_node("coder", coder_fn)
+    builder.add_node("executor", executor_fn)
+    builder.add_node("debugger", debugger_fn)
+    builder.add_node("reporter", reporter_fn)
 
     # ---- 入口 ----
     builder.set_entry_point("planner")

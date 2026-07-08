@@ -4,11 +4,13 @@ CLI 入口：交互式接收自然语言需求，执行 Plan → Code → Execut
 
 用法:
     python main.py                   # 交互模式（默认工作区 ./workspace）
+    python main.py --rich            # 启用 Rich 终端 UI（进度条 + 状态表 + 日志面板）
     python main.py --skip-debug      # 跳过 Debugger 节点（无人值守模式）
 
 环境变量:
     WORKSPACE_PATH     工作区根目录（默认 ./workspace）
     DEEPSEEK_API_KEY   DeepSeek API 密钥（必须）
+    USE_RICH           设置为 "true" 启用 Rich 终端 UI（等价于 --rich 参数）
 """
 
 import os
@@ -117,8 +119,116 @@ def _print_status(label: str, detail: str = "") -> None:
         print(f"  [{label}]")
 
 
+def _print_plain_summary(result: dict, workspace_path: str) -> None:
+    """纯文本模式打印执行摘要。"""
+    print()
+    print("-" * 60)
+    print("📊 执行摘要")
+    print("-" * 60)
+
+    plan = result.get("plan", [])
+    if plan:
+        print(f"  执行计划: {len(plan)} 个步骤")
+        for i, step in enumerate(plan, 1):
+            print(f"    {i}. {step}")
+
+    exec_result = result.get("execution_result")
+    if exec_result:
+        print(f"\n  执行结果:\n    {exec_result.strip()[:300]}")
+
+    error = result.get("error")
+    if error:
+        print(f"\n  ⚠️ 错误: {error[:200]}")
+
+    retry = result.get("retry_count", 0)
+    if retry > 0:
+        print(f"\n  重试次数: {retry} / 2")
+
+    feedback = result.get("human_feedback")
+    if feedback:
+        print(f"  人在回路: {feedback[:100]}")
+
+    report = result.get("final_report", "")
+    if report:
+        print(f"\n  ✅ 报告已生成（{len(report)} 字符）")
+        report_files = sorted(
+            Path(workspace_path).glob("reports/report_*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if report_files:
+            print(f"  📄 报告文件: {report_files[0]}")
+
+
+def _print_rich_summary(
+    result: dict, workspace_path: str, ui_manager: object | None
+) -> None:
+    """Rich 模式下打印执行摘要（通过 UI log + 终端 print）。"""
+    plan = result.get("plan", [])
+    if plan:
+        print(f"\n📋 执行计划: {len(plan)} 个步骤")
+        for i, step in enumerate(plan, 1):
+            print(f"  {i}. {step}")
+
+    exec_result = result.get("execution_result")
+    if exec_result:
+        print(f"\n📊 执行结果:\n  {exec_result.strip()[:300]}")
+
+    error = result.get("error")
+    if error:
+        print(f"\n⚠️ 错误: {error[:200]}")
+
+    retry = result.get("retry_count", 0)
+    if retry > 0:
+        print(f"🔄 重试次数: {retry} / 2")
+
+    report = result.get("final_report", "")
+    if report:
+        print(f"\n✅ 报告已生成（{len(report)} 字符）")
+        report_files = sorted(
+            Path(workspace_path).glob("reports/report_*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if report_files:
+            print(f"📄 报告文件: {report_files[0]}")
+
+
+def _print_rich_mode_status(is_tty: bool) -> None:
+    """打印 Rich 模式状态。"""
+    if is_tty:
+        print("🎨 Rich 终端 UI 已启动（进度条 + 状态表 + 日志面板）")
+    else:
+        print("⚠️ 非 TTY 环境，Rich UI 降级为纯文本模式")
+
+
+def _ensure_live_stopped_for_input(ui_manager: object) -> None:
+    """暂停 Live 以允许 input() 正常读取。
+
+    Rich Live 使用 cursor-up 重绘，会干扰终端 input()。
+    暂停后手动清屏为 input 提供干净空间。
+    """
+    if hasattr(ui_manager, "_live") and ui_manager._live is not None:
+        try:
+            ui_manager._live.stop()
+        except Exception:
+            pass
+
+
+def _restart_live_for_input(ui_manager: object) -> None:
+    """重新启动 Live（任务执行前）。"""
+    if hasattr(ui_manager, "_live") and ui_manager._live is not None:
+        try:
+            ui_manager._live.start()
+        except Exception:
+            pass
+
+
 def main() -> None:
     """DecisionCoder CLI 主入口。"""
+    # ---- 检查是否启用 Rich UI ----
+    use_rich = "--rich" in sys.argv or os.environ.get("USE_RICH", "").lower() == "true"
+
     # ---- 初始化 ----
     workspace_path = _setup_environment()
     _print_banner(workspace_path)
@@ -127,19 +237,37 @@ def main() -> None:
     from src.agent.graph import build_graph
     from src.agent.state import AgentState
 
+    # ---- Rich UI 初始化 ----
+    ui_manager = None
+    if use_rich:
+        from src.agent.ui.manager import UIManager
+        ui_manager = UIManager()
+        ui_manager.start()
+        _print_rich_mode_status(ui_manager._is_tty)
+
     try:
-        graph = build_graph()
+        graph = build_graph(use_ui=use_rich, ui_manager=ui_manager)
     except Exception as exc:
+        if ui_manager is not None:
+            ui_manager.stop()
         print(f"❌ Graph 编译失败: {exc}")
         sys.exit(1)
 
-    print("✅ Graph 编译成功，就绪。\n")
+    if not use_rich:
+        print("✅ Graph 编译成功，就绪。\n")
 
     # ---- 主循环 ----
     while True:
         try:
             # 读取用户输入
-            user_input = input("🔍 请输入任务 > ").strip()
+            prompt = "🔍 请输入任务 > "
+            if use_rich and ui_manager is not None and ui_manager._is_tty:
+                # 在 Rich 模式下暂停 Live 以允许 input()
+                _ensure_live_stopped_for_input(ui_manager)
+                user_input = input(prompt).strip()
+                _restart_live_for_input(ui_manager)
+            else:
+                user_input = input(prompt).strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\n👋 再见！")
             break
@@ -159,11 +287,12 @@ def main() -> None:
             continue
 
         # ---- 执行任务 ----
-        print()
-        print("-" * 60)
-        print(f"📝 任务: {user_input}")
-        print("-" * 60)
-        print()
+        if not use_rich:
+            print()
+            print("-" * 60)
+            print(f"📝 任务: {user_input}")
+            print("-" * 60)
+            print()
 
         # 构造初始状态
         initial_state: AgentState = {
@@ -185,46 +314,10 @@ def main() -> None:
             config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
             result = graph.invoke(initial_state, config)
 
-            # 打印结果摘要
-            print()
-            print("-" * 60)
-            print("📊 执行摘要")
-            print("-" * 60)
-
-            plan = result.get("plan", [])
-            if plan:
-                print(f"  执行计划: {len(plan)} 个步骤")
-                for i, step in enumerate(plan, 1):
-                    print(f"    {i}. {step}")
-
-            exec_result = result.get("execution_result")
-            if exec_result:
-                print(f"\n  执行结果:\n    {exec_result.strip()[:300]}")
-
-            error = result.get("error")
-            if error:
-                print(f"\n  ⚠️ 错误: {error[:200]}")
-
-            retry = result.get("retry_count", 0)
-            if retry > 0:
-                print(f"\n  重试次数: {retry} / 2")
-
-            feedback = result.get("human_feedback")
-            if feedback:
-                print(f"  人在回路: {feedback[:100]}")
-
-            # 报告
-            report = result.get("final_report", "")
-            if report:
-                print(f"\n  ✅ 报告已生成（{len(report)} 字符）")
-                # 报告写入位置
-                report_files = sorted(
-                    Path(workspace_path).glob("reports/report_*.md"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if report_files:
-                    print(f"  📄 报告文件: {report_files[0]}")
+            if use_rich:
+                _print_rich_summary(result, workspace_path, ui_manager)
+            else:
+                _print_plain_summary(result, workspace_path)
 
         except KeyboardInterrupt:
             print("\n\n⚠️ 任务被中断（Ctrl+C）")
@@ -235,8 +328,9 @@ def main() -> None:
             print("  💡 提示: 请检查需求是否明确，或尝试更简单的任务。")
             continue
 
-        print()
+        if not use_rich:
+            print()
 
-
-if __name__ == "__main__":
-    main()
+    # ---- 清理 Rich UI ----
+    if ui_manager is not None:
+        ui_manager.stop()

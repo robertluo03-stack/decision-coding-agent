@@ -22,7 +22,7 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 
-from src.agent.ui.panels import LogPanel, ProgressPanel, StatusTable
+from src.agent.ui.panels import DebugPanel, LogPanel, ProgressPanel, StatusTable
 
 
 class UIManager:
@@ -57,6 +57,8 @@ class UIManager:
         self._progress_panel = ProgressPanel()
         self._status_table = StatusTable()
         self._log_panel = LogPanel()
+        self._debug_panel = DebugPanel()
+        self._debug_mode: bool = False
         self._queue: queue.Queue[tuple] = queue.Queue()
         self._live: Live | None = None
         self._running: bool = False
@@ -121,6 +123,24 @@ class UIManager:
         """
         self._queue.put(("log", message, level))
 
+    def enter_debug_mode(self, error: str, diagnosis: str) -> None:
+        """进入调试模式（线程安全）。
+
+        暂停进度条动画，右侧切换为 DebugPanel 展示错误摘要 + 4 个选项。
+
+        Args:
+            error: 错误消息摘要。
+            diagnosis: AI / 规则诊断结果。
+        """
+        self._queue.put(("debug_enter", error, diagnosis))
+
+    def exit_debug_mode(self) -> None:
+        """退出调试模式（线程安全）。
+
+        恢复进度条动画，右侧切回日志面板。
+        """
+        self._queue.put(("debug_exit",))
+
     # ── 测试辅助 ──────────────────────────────────────────
 
     def get_node_status(self, node: str) -> dict[str, Any] | None:
@@ -144,6 +164,11 @@ class UIManager:
             [(message, level), ...] 的副本。
         """
         return list(self._log_panel.logs)
+
+    @property
+    def debug_mode(self) -> bool:
+        """是否处于调试模式（供测试使用）。"""
+        return self._debug_mode
 
     # ── 内部：队列消费 ─────────────────────────────────────
 
@@ -185,12 +210,19 @@ class UIManager:
         elif event_type == "log":
             _, message, level = event
             self._log_panel.add(message, level)
+        elif event_type == "debug_enter":
+            _, error, diagnosis = event
+            self._debug_mode = True
+            self._debug_panel.activate(error, diagnosis)
+        elif event_type == "debug_exit":
+            self._debug_mode = False
+            self._debug_panel.deactivate()
 
     def _build_renderable(self) -> Layout:
         """构建左右分栏布局。
 
         左（ratio=2）：ProgressPanel + StatusTable 垂直排列。
-        右（ratio=1）：LogPanel。
+        右（ratio=1）：DebugPanel（debug 模式）或 LogPanel（正常模式）。
 
         Returns:
             Rich Layout 渲染对象。
@@ -203,11 +235,16 @@ class UIManager:
         left_bottom = self._status_table.get_renderable()
         left = RichGroup(left_top, left_bottom)
 
-        right = Panel(
-            self._log_panel.get_renderable(),
-            title="日志",
-            border_style="green",
-        )
+        if self._debug_mode:
+            right_content = self._debug_panel.get_renderable()
+            right_title = "🐛 调试模式"
+            right_style = "red"
+        else:
+            right_content = self._log_panel.get_renderable()
+            right_title = "日志"
+            right_style = "green"
+
+        right = Panel(right_content, title=right_title, border_style=right_style)
 
         layout = Layout()
         layout.split_row(
