@@ -879,56 +879,6 @@ except ImportError:
 
 ## DEV_LOG.md 需要追加的内容
 
-```markdown
-## 2026-07-XX Week5-Day1 — 供应链库存分析流水线 (inventory_pipeline)
-
-### 实现内容
-- inventory_pipeline.py：7 步流水线（读取→质量检查→预测→EOQ→安全库存→补货点→图表→报告）
-- 数据粒度自动检测（月/周/日）
-- 年需求自动推断
-- 8 章节 Markdown 报告
-- 单步失败不中断（容错设计）
-
-### 测试
-- test_inventory_pipeline.py：15 场景，15/15 通过
-
----
-
-## 2026-07-XX Week5-Day2 — 报告增强器 (report_enhancer)
-
-### 实现内容
-- report_enhancer.py：零 LLM 规则化增强
-- 3 类增强：模型假设 + 局限性 + 业务建议
-- 规则覆盖：数据量/MAPE/EOQ/安全库存比/补货点频率等 20+ 条
-- 报告章节插入：替换第 7 章为 7/8/9 三章
-
-### 测试
-- test_report_enhancer.py：14 场景，14/14 通过
-
----
-
-## 2026-07-XX Week5-Day3 — Planner 增强 + Pipeline 集成
-
-### 实现内容
-- planner.md：新增 2 个供应链场景 plan 示例
-- 场景识别规则：数据文件+供应链关键词 → 长 plan，纯参数 → 短 plan
-- inventory_pipeline 集成 report_enhancer
-
----
-
-## 2026-07-XX Week5-Day4 — Demo 数据 + E2E 测试
-
-### 实现内容
-- sku_inventory.csv：24 期月度数据，含 2 个异常值
-- demo_inventory_optimization.py：命令行 Demo 脚本
-- test_e2e_week5.py：3 个 E2E 场景（完整流水线 / 纯参数 / 文件不存在）
-
-### 测试结果
-- E2E：X/X 通过
-- 人类干预次数：X
-
----
-
 ## 2026-07-XX — Week 5 完整总结
 
 ### Benchmark 数字

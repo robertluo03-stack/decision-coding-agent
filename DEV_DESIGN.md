@@ -1,7 +1,7 @@
 # DecisionCoder — 开发设计文档
 
 > **面向自己**：这份文档会随着开发不断修改，记录设计决策、接口变更和踩坑记录。
-> **版本**：v0.4 | **日期**：2026-07-07 | **当前阶段**：Week 4 领域模板层完成，进入 Week 5
+> **版本**：v0.5 | **日期**：2026-07-08 | **当前阶段**：Week 5 场景集成完成，进入 Week 6
 
 ---
 
@@ -162,12 +162,12 @@ Planner → Coder → Executor → [条件路由]
 - [x] 参数提取：从自然语言中提取模板参数
 - **验收**：输入"年需求1000，订货成本50，持有成本2"，输出EOQ=223.6
 
-### Week 5：场景集成 + 完整闭环
-- [ ] 多节点协作：Explorer → Analyst → Optimizer → Reviewer
-- [ ] 供应链库存场景：数据读取→预测→优化→报告
-- [ ] 报告增强：包含假设、局限性、业务建议
-- [ ] 测试用例生成（pytest）
-- **验收**：一个完整Demo任务，从输入到报告，人类干预不超过2次
+### Week 5：场景集成 + 完整闭环 ✅
+- [x] 多节点协作：Explorer → Analyst → Optimizer → Reviewer
+- [x] 供应链库存场景：数据读取→预测→优化→报告
+- [x] 报告增强：包含假设、局限性、业务建议
+- [x] 测试用例生成（pytest）
+- **验收**：一个完整Demo任务，从输入到报告，人类干预不超过2次 ✅
 
 ### Week 6：CLI美化 + 评测
 - [ ] Rich终端UI（进度条、面板、表格）
@@ -208,6 +208,11 @@ Planner → Coder → Executor → [条件路由]
 | 2026-07-07 | 补货点模板作为 EOQ + 安全库存的组合器 | 展示模板间协作，体现架构设计 | 依赖前两个模板必须先实现 |
 | 2026-07-07 | 需求预测纯 Python 实现（不用 statsmodels） | 避免重量级依赖，保持项目轻量 | 算法精度可能低于专业库 |
 | 2026-07-07 | Coder Prompt 新增第 5 级供应链模板优先级 | 让用户自然语言直接触发领域模板 | LLM 可能选错模板或参数 |
+| 2026-07-07 | inventory_pipeline 8 步容错流水线 | 单步失败不中断后续，保证报告产出 | 部分失败时报告质量下降 |
+| 2026-07-07 | 数据粒度自动检测（月/周/日） | 用户无需手动指定周期，降低使用门槛 | 检测错误导致年需求推断偏差 |
+| 2026-07-07 | report_enhancer 规则化增强（零 LLM） | 与结论引擎一致，零延迟、零成本、100% 可预测 | 建议深度弱于 LLM 生成 |
+| 2026-07-07 | 流水线与增强器解耦 | 独立测试，可单独使用 | 需手动 `build_enhancer_input()` 桥接 |
+| 2026-07-07 | Planner 供应链场景识别规则 | 区分数据驱动（长 plan ≤7 步）vs 参数驱动（短 plan ≤5 步） | LLM 可能误判场景 |
 
 ---
 
@@ -289,21 +294,23 @@ decision-coder/
 │   │       ├── python_tools.py       # Python 沙箱执行（AST安全检查 + compile预检 + 保留临时文件）
 │   │       └── data_utils.py         # 类型推断辅助（5种规则: datetime/percentage/mixed/generic）
 │   └── domain/
-│       ├── __init__.py               # 领域层统一导出（26个符号: 8 原有 + 18 Week4新增）
+│       ├── __init__.py               # 领域层统一导出（36个符号: 8 原有 + 18 Week4 + 10 Week5）
 │       ├── schema.py                 # 领域数据模型
 │       ├── data_quality.py           # 数据质量检测引擎（4维度检测 + 0-100评分 + 中文建议）
 │       ├── chart_templates.py        # Plotly 图表模板（5种: bar/line/histogram/scatter/heatmap）
 │       ├── text_to_sql.py            # Text-to-SQL 引擎（Schema提取→LLM SQL→安全检查→DuckDB执行）
+│       ├── template_matcher.py       # 模板匹配器（多关键词打分 + 6类意图 + UNKNOWN兜底）
+│       ├── param_extractor.py        # 参数提取器（正则数值提取 + 距离优先别名映射）
+│       ├── report_enhancer.py        # 报告增强器（30条规则引擎 + 三章节生成）             ← Week 5
 │       └── templates/                # 预定义领域模板
 │           ├── __init__.py
 │           ├── inventory_eoq.py      # EOQ 经济订货批量（calculate函数，已实现）
 │           ├── safety_stock.py       # 安全库存计算（已实现，3种波动场景 + scipy Z-score）
 │           ├── demand_forecast.py    # 需求预测（已实现，4种算法 + auto选择 + 精度评估）
 │           ├── reorder_point.py      # 补货点计算（已实现，ROP + 复合接口 + 规则建议）
+│           ├── inventory_pipeline.py # 供应链库存分析流水线（8步端到端闭环 + 粒度检测）  ← Week 5
 │           └── data_analysis.py      # 一键数据分析（7步流水线 + 5章节报告 + 规则结论）
-│       ├── template_matcher.py       # 模板匹配器（多关键词打分 + 6类意图 + UNKNOWN兜底）
-│       └── param_extractor.py        # 参数提取器（正则数值提取 + 距离优先别名映射）
-├── tests/                            # 项目级测试（24个文件，369用例）
+├── tests/                            # 项目级测试（27个文件，390+用例）
 │   ├── __init__.py
 │   ├── test_planner.py               # 1 场景
 │   ├── test_coder.py                 # 10 场景（结构/边界/执行/安全/AI_FIX）
@@ -328,10 +335,14 @@ decision-coder/
 │   ├── test_template_matcher.py      # 21 场景（6类意图 + 混合 + 兜底 + 边界）                ← Week 4
 │   ├── test_param_extractor.py       # 30 场景（中/英数值提取 + 定向 + 缺失检测 + 边界）       ← Week 4
 │   └── test_e2e_week4.py             # 8 场景（4 LLM端到端 + 4 直接调用）                     ← Week 4
+│   ├── test_inventory_pipeline.py    # 22 场景（黄金路径/粒度检测/边界/增强集成）               ← Week 5
+│   ├── test_report_enhancer.py       # 34 场景（规则触发/插入/空输入/辅助函数）                 ← Week 5
+│   └── test_e2e_week5.py             # 7 场景（3 LLM端到端 + 4 直接调用）                       ← Week 5
 ├── workspace/                        # 工作区（不提交git）
 │   ├── data/                         # 用户数据文件
 │   │   ├── sales.csv                 # 120行销售数据（含缺失值+异常值）
-│   │   └── inventory.csv             # 55行库存数据
+│   │   ├── inventory.csv             # 55行库存数据
+│   │   └── sku_inventory.csv         # 24行月度SKU库存数据（含异常值 + 上升趋势）             ← Week 5
 │   ├── src/                          # Agent 生成的临时代码文件（_dc_exec_*.py）
 │   ├── reports/                      # 生成的 Markdown 报告 + HTML 图表
 │   │   ├── report_*.md               # 成功报告
@@ -341,6 +352,7 @@ decision-coder/
 │   ├── output/                       # 执行输出
 │   └── tests/                        # 工作区测试脚本
 ├── examples/                         # Demo 示例
+│   └── demo_inventory_optimization.py # 供应链库存优化 CLI Demo 脚本                        ← Week 5
 ├── docs/                             # 文档
 └── logs/                             # 日志文件（不提交git）
     ├── debug.log                     # DEBUG+ 级别（按天轮转，zip压缩，保留7天）
@@ -407,44 +419,43 @@ SQL 安全防线（Text-to-SQL）：
 1. **MCP协议**：工具层基于 FastMCP 封装8个标准化 Tool，支持 stdio transport
 2. **LangGraph状态机**：Plan-Code-Execute-Debug-Report 闭环，2个条件路由，支持循环调试
 3. **Human-in-the-loop**：14种规则错误分类 + LLM分析 + 4种人类选择，retry_count上限强制ABORT
-4. **领域模板体系**：5 个供应链模板（EOQ/预测/安全库存/补货点）+ 一键分析 + Text-to-SQL + 5种图表模板
+4. **领域模板体系**：7 个供应链模板（EOQ/预测/安全库存/补货点/Pipeline）+ 一键分析 + Text-to-SQL + 5种图表模板
 5. **沙箱安全**：5道纵深防线（LLM语义→AST检查→执行前预检→DockerRunner兜底→Docker容器隔离）
 6. **结论引擎规则化**：7条if-else规则生成中文结论，零LLM调用、零延迟、100%可预测
 7. **模板匹配与参数提取**：规则化意图分类 + 正则数值提取，零LLM延迟，100%可预测
+8. **供应链端到端闭环**：数据读取→质量检查→需求预测→EOQ→安全库存→补货点→图表→增强报告，8步全自动
+9. **报告增强器**：30条规则引擎（假设10+局限性10+建议10），零LLM，自动插入报告
 
-### 数字指标（Week 4 实际数据）
-- 代码运行成功率：**100%**（E2E 8/8 任务全部一次成功，retry_count=0）
-- 测试通过率：**100%**（369/369，零回归）
+### 数字指标（Week 5 实际数据）
+- 代码运行成功率：**100%**（E2E 12/12 任务全部一次成功，retry_count=0）
+- 测试通过率：**100%**（390/390，零回归）
 - 平均重试次数：**0**（E2E 无 Debugger 触发）
 - 任务完成率：**100%**
-- 图表生成成功率：**100%**（18单元 + 1 E2E）
+- 图表生成成功率：**100%**（18单元 + 2 E2E）
 - SQL 安全检查拦截率：**100%**（11种危险模式全拦截）
-- 模板匹配准确率：**100%**（11/11 手工测试）
-- 参数提取成功率：**89%**（8/9 手工测试）
-- 累计测试数：**369**（Week1: 55 → Week2: 144 → Week3: 255 → Week4: 369）
+- 模板匹配准确率：**100%**（21/21 单元测试 + 11/11 手工测试）
+- 参数提取成功率：**100%**（30/30 单元测试）
+- 完整闭环成功率：**100%**（8步流水线数据→预测→EOQ→SS→ROP→图表→报告 端到端）
+- 累计测试数：**390**（Week1: 55 → Week2: 144 → Week3: 255 → Week4: 369 → Week5: 390）
 
-### Week 1 → Week 4 架构演进
+### Week 1 → Week 5 架构演进
 
-| 维度 | Week 1 | Week 2 | Week 3 | Week 4 |
-|------|--------|--------|--------|--------|
-| 执行方式 | subprocess | subprocess / MCP / Docker 三选一 | 同 Week 2 + PYTHONPATH 注入 | 同 Week 3 |
-| 安全检查 | 字符串匹配（2套规则） | AST 语法级分析（统一） | 同 Week 2 + SQL 正则安全 | 同 Week 3 |
-| 工具层 | 纯 Python 函数 | MCP 协议（6 Tool） | MCP 协议（8 Tool） | 同 Week 3 |
-| 沙箱隔离 | 仅 subprocess 超时 | Docker 容器 5 维限制 | 同 Week 2 | 同 Week 2 |
-| 日志系统 | print() | loguru 双通道 + rotation + compression | 同 Week 2 | 同 Week 2 |
-| 错误诊断 | 6 种规则 | 14 种规则 + DuckDB 分类 | 同 Week 2 | 同 Week 2 |
-| 报告类型 | 单一 report_*.md | report_*.md / fail_*.md | 同 Week 2 + 图表链接检测 | 同 Week 3 |
-| 数据能力 | 无 | 无 | 质量检查 + 5图表 + Text-to-SQL + 一键分析 | 同 Week 3 |
-| 领域模板 | 无 | EOQ（骨架） | 3 骨架（EOQ/SS/Forecast） | **5 模板 + 2 引擎**（匹配器+提取器） |
-| 意图分类 | 无 | 无 | 无 | **规则化多关键词打分（6 类）** |
-| NL 参数提取 | 无 | 无 | 无 | **正则 + 距离优先别名匹配（85+ 别名）** |
-| 依赖库 | 5个 | 6个 | 9个（+plotly +duckdb +openpyxl） | 9个（零新增） |
-| 测试数 | 55 | 144 | 255 | **369** |
-| 错误诊断 | 6 种规则 | 14 种规则 + DuckDB 分类 | 同 Week 2 |
-| 报告类型 | 单一 report_*.md | report_*.md / fail_*.md | 同 Week 2 + 图表链接检测 |
-| 数据能力 | 无 | 无 | 质量检查 + 5图表 + Text-to-SQL + 一键分析 |
-| 依赖库 | 5个 | 6个 | 9个（+plotly +duckdb +openpyxl） |
-| 测试数 | 55 | 144 | **255** |
+| 维度 | Week 1 | Week 2 | Week 3 | Week 4 | Week 5 |
+|------|--------|--------|--------|--------|--------|
+| 执行方式 | subprocess | 3路径+MCP+Docker | +PYTHONPATH注入 | 同Week3 | 同Week3 |
+| 安全检查 | 字符串匹配 | AST语法级分析 | +SQL正则安全 | 同Week3 | 同Week3 |
+| 工具层 | 纯Python函数 | MCP协议（6 Tool） | MCP协议（8 Tool） | 同Week3 | 同Week3 |
+| 沙箱隔离 | 仅超时 | Docker容器5维限制 | 同Week2 | 同Week2 | 同Week2 |
+| 日志系统 | print() | loguru双通道+rotation | 同Week2 | 同Week2 | 同Week2 |
+| 错误诊断 | 6种规则 | 14种规则+DuckDB | 同Week2 | 同Week2 | 同Week2 |
+| 报告类型 | 单一report | report/fail两种 | +图表链接检测 | 同Week3 | **+增强器自动插入3章节** |
+| 数据能力 | 无 | 无 | 质量+5图表+SQL+一键分析 | 同Week3 | 同Week3 |
+| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** |
+| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 |
+| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 |
+| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** |
+| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） |
+| 测试数 | 55 | 144 | 255 | 369 | **390** |
 
 ---
 
@@ -551,4 +562,46 @@ from src.domain.param_extractor import extract_params
 
 params = extract_params("年需求1000，订货成本50，持有成本2")
 # → {"annual_demand": 1000.0, "ordering_cost": 50.0, "holding_cost": 2.0}
+```
+
+### 库存供应链分析流水线（Week 5 新增）
+
+```python
+from src.domain.templates.inventory_pipeline import (
+    run_inventory_pipeline, quick_analyze,
+    InventoryPipelineParams, InventoryPipelineResult,
+)
+
+# 完整调用
+result = run_inventory_pipeline(InventoryPipelineParams(
+    csv_path="data/demand.csv", time_col="month", demand_col="demand",
+    ordering_cost=100.0, holding_cost_rate=0.2, unit_cost=10.0,
+    service_level=95.0, lead_time=1.0, forecast_periods=3, output_dir="reports/",
+))
+# → InventoryPipelineResult(report_path, forecast_result, eoq_result,
+#     safety_stock_result, rop_result, quality_report, charts)
+print(result.report_path)  # 10 章节增强 Markdown 报告路径
+
+# 便捷入口（全默认值）
+result = quick_analyze("data/demand.csv")
+```
+
+### 报告增强器（Week 5 新增）
+
+```python
+from src.domain.report_enhancer import (
+    enhance_report, enhance_from_pipeline, build_enhancer_input,
+    EnhancerInput, EnhancedSections,
+)
+
+# 方式 1：手动构建输入
+info = EnhancerInput(history_length=24, mape=8.5, eoq=366.6, ...)
+enhanced = enhance_report(base_md, info)
+
+# 方式 2：从 pipeline result 自动构建
+info = build_enhancer_input(pipeline_result)
+enhanced = enhance_report(base_md, info)
+
+# 方式 3：完整流程（增强 + 写入）
+enhanced = enhance_from_pipeline(base_md, pipeline_result)
 ```

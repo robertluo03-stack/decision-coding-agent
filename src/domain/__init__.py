@@ -119,6 +119,44 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Week 5 新增：库存供应链分析流水线 (Day 2-3)
+# ---------------------------------------------------------------------------
+
+try:
+    from src.domain.templates.inventory_pipeline import (
+        run_inventory_pipeline,
+        quick_analyze,
+        InventoryPipelineParams,
+        InventoryPipelineResult,
+    )
+except ImportError:
+    run_inventory_pipeline = None  # type: ignore[assignment]
+    quick_analyze = None  # type: ignore[assignment]
+    InventoryPipelineParams = None  # type: ignore[assignment]
+    InventoryPipelineResult = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Week 5 新增：报告增强器 (Day 4)
+# ---------------------------------------------------------------------------
+
+try:
+    from src.domain.report_enhancer import (
+        enhance_report,
+        enhance_from_pipeline,
+        build_enhancer_input,
+        EnhancerInput,
+        EnhancedSections,
+    )
+except ImportError:
+    enhance_report = None  # type: ignore[assignment]
+    enhance_from_pipeline = None  # type: ignore[assignment]
+    build_enhancer_input = None  # type: ignore[assignment]
+    EnhancerInput = None  # type: ignore[assignment]
+    EnhancedSections = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
 # 公开符号
 # ---------------------------------------------------------------------------
 
@@ -155,4 +193,15 @@ __all__ = [
     "extract_params",
     "extract_params_for_template",
     "describe_missing_params",
+    # Week 5 — 库存供应链分析流水线
+    "run_inventory_pipeline",
+    "quick_analyze",
+    "InventoryPipelineParams",
+    "InventoryPipelineResult",
+    # Week 5 — 报告增强器
+    "enhance_report",
+    "enhance_from_pipeline",
+    "build_enhancer_input",
+    "EnhancerInput",
+    "EnhancedSections",
 ]
