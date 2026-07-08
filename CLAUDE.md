@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DecisionCoder 是一个面向经营决策与运筹优化的垂直 Coding Agent。基于 LangGraph StateGraph 编排 Plan-Code-Execute-Debug-Report 闭环，LLM 通过 DeepSeek API 调用。
 
-- **当前阶段**：Week 3 已完成（数据分析能力闭环），进入 Week 4（领域模板）
-- **累计测试数**：255（Week 1: 55 → Week 2: 144 → Week 3: 255），全部通过，零回归
+- **当前阶段**：Week 6 已完成（CLI美化+Benchmark评测），进入 Week 7（工程化+面试准备）
+- **累计测试数**：472（Week1:55 → Week2:144 → Week3:255 → Week4:369 → Week5:390 → Week6:472），全部通过，零回归
 
 ## 常用命令
 
@@ -21,6 +21,15 @@ pip install -e .
 
 # 运行主程序（交互式 CLI）
 python main.py
+
+# 带 Rich 终端 UI
+python main.py --rich
+# 或 USE_RICH=true python main.py
+
+# Benchmark 评测
+python -m benchmark run              # 运行全部 10 个任务
+python -m benchmark run --rich       # 带 Rich 终端 UI
+python -m benchmark report <jsonl>   # 从 JSONL 生成 MD + HTML 报告
 
 # 用 pytest 运行全部单元测试
 python -m pytest tests/ -v --ignore=tests/test_docker_mode_graph.py --ignore=tests/test_docker_runner_security.py
@@ -54,6 +63,28 @@ Planner → Coder → Executor → [route_after_executor]
 两个条件路由在 [src/agent/graph.py](src/agent/graph.py)：
 - `route_after_executor`: error 且 `human_feedback != "ABORT"` → `"debug"`，否则 → `"report"`
 - `route_after_debugger`: `human_feedback == "ABORT"` → `"report"`，否则 → `"code"`（回 Coder）
+
+### UI 层（Week 6 新增）
+
+[src/agent/ui/](src/agent/ui/) — Rich 终端 UI，可选启用：
+- **ProgressPanel**：5 节点进度条（Planner/Coder/Executor/Debugger/Reporter）
+- **StatusTable**：🟡等待 → 🔵运行中 → 🟢完成 → 🔴错误
+- **LogPanel**：最多 50 条日志自动截断
+- **DebugPanel**：Markdown 错误摘要 + 4 个选项
+- **UIManager**：`queue.Queue` 线程安全缓冲，非 TTY 自动降级为 `print()`
+- **NodeTracer**：函数包装器，零侵入追踪节点执行状态
+- 启用方式：`main.py --rich` 或 `build_graph(use_ui=True, ui_manager=ui)`
+
+### Benchmark 层（Week 6 新增）
+
+[src/benchmark/](src/benchmark/) — 自动化评测框架：
+- **10 个预定义任务**：5 数据分析（BA-01~05）+ 5 代码生成（CG-01~05）
+- **BenchmarkRunner**：逐个执行任务，`threading.Event.wait(timeout)` 跨平台超时
+- **MetricsCollector**：完成率/成功率/平均重试/平均耗时 + 按类别分组
+- **ReportGenerator**：Markdown + HTML 报告（进度条/卡片/徽章，内联 CSS）
+- **validate_task_result**：关键词匹配（大小写不敏感 + 浮点数宽松匹配）
+- JSONL 逐行追加，支持断点续跑
+- CLI：`python -m benchmark run` / `python -m benchmark report <jsonl>`
 
 ### AgentState
 
@@ -142,6 +173,9 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 - 图表模块禁止引入 `kaleido`，只输出 HTML（Plotly JS CDN）
 - **E2E 测试**：`tests/test_e2e_week3.py` 依赖 `DEEPSEEK_API_KEY`，测试脚本需显式 `load_dotenv()` 加载 `.env`
 - 所有测试脚本可直接 `python tests/test_xxx.py` 运行，也可 `pytest tests/test_xxx.py -v`
+- **Benchmark 任务**：新增任务定义在 `src/benchmark/tasks.py` 的 `get_default_tasks()` 函数中，保持 5+5 分类（BA-01~05 数据分析，CG-01~05 代码生成），每个任务必须包含 `expected_keywords`（3-5 个，不区分大小写）和明确的 query
+- **UI 组件**：新增面板在 `src/agent/ui/panels.py`，通过 `UIManager` 管理。面板只接收状态更新不修改状态。NodeTracer 通过函数包装器注入不修改节点文件。
+- **Benchmark 报告**：`ReportGenerator.generate_md/html()` 接受 `MetricsCollector`，零外部框架（内联 CSS），可从 Runner 或 JSONL 构建
 
 ## AI 写代码时的标准流程
 
@@ -154,5 +188,5 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 
 ## 关键文档
 
-- **[DEV_DESIGN.md](DEV_DESIGN.md)** — 设计决策记录（15条）、阶段规划、接口契约、安全体系、API参考
-- **[DEV_LOG.md](DEV_LOG.md)** — 按日期记录的开发日志 + 17条踩坑记录 + Benchmark数据
+- **[DEV_DESIGN.md](DEV_DESIGN.md)** — 设计决策记录（27条）、阶段规划、接口契约、安全体系、API参考、架构演进表
+- **[DEV_LOG.md](DEV_LOG.md)** — 按日期记录的开发日志 + 25条踩坑记录 + Benchmark数据

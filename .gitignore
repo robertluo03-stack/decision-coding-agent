@@ -41,3 +41,13 @@ Thumbs.db
 
 # Logs
 logs/
+
+# Benchmark results
+results/
+
+# Workspace generated files (keep data files but ignore generated)
+workspace/src/_dc_exec_*.py
+workspace/reports/*.md
+workspace/reports/charts/*.html
+workspace/reports/report_*.md
+workspace/reports/fail_*.md

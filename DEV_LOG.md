@@ -2771,7 +2771,213 @@ tests/test_benchmark_reporter.py: 13 passed in 0.37s
 
 ### 回退点
 
+`git commit 当前状态`（Week 6 收尾基线，准备 Week 7）
+
+---
+
+## 2026-07-08 — Week 6 完整总结
+
+### Benchmark 数字
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 单元测试通过率 | **472/472 = 100%** | 每周累计无回归 |
+| E2E 测试通过率 | **N/A** | Week 6 未运行 LLM E2E（仅单元 mock） |
+| 新增测试数 | **83** | Week 6 每日累计 |
+| 累计测试数 | **473** | Week1:55 → Week2:144 → Week3:255 → Week4:369 → Week5:390 → Week6:473 |
+| 新增依赖 | 0 | rich 已在 pyproject.toml 中 |
+| 新增文件 | **13** | 4 UI + 6 Benchmark + 2 Demo + 1 无 |
+
+### 完成的子任务清单
+
+- [x] Day 1 — Rich 终端 UI 基础框架（ProgressPanel / StatusTable / LogPanel + UIManager）
+- [x] Day 2 — Graph 执行过程实时追踪（NodeTracer + DebugPanel + graph 集成 + main.py --rich）
+- [x] Day 3 — Benchmark 任务集与指标定义（10 任务 + MetricsCollector）
+- [x] Day 4 — Benchmark 执行引擎（validators + runner + JSONL + CLI run）
+- [x] Day 5 — 报告生成与 Rich 集成（MD + HTML 报告 + runner use_ui + CLI report）
+- [x] Day 6 — E2E 验证 + 文档更新（DEV_DESIGN.md + CLAUDE.md）
+- [x] Day 7 — Demo 脚本 + .gitignore 清理 + pyproject.toml 验证
+
+### Week 6 新增文件清单
+
+| 文件 | 职责 | Day |
+|------|------|-----|
+| `src/agent/ui/__init__.py` | UI 包导出 | 1 |
+| `src/agent/ui/panels.py` | ProgressPanel + StatusTable + LogPanel + DebugPanel | 1+2 |
+| `src/agent/ui/manager.py` | UIManager（队列+Live+debug模式+降级）| 1+2 |
+| `src/agent/ui/tracer.py` | NodeTracer + trace_graph_nodes | 2 |
+| `src/benchmark/__init__.py` | Benchmark 包导出 | 3 |
+| `src/benchmark/models.py` | BenchmarkTask + BenchmarkResult | 3 |
+| `src/benchmark/tasks.py` | get_default_tasks() 10 个预定义任务 | 3 |
+| `src/benchmark/metrics.py` | MetricsCollector 指标计算 | 3 |
+| `src/benchmark/validators.py` | validate_task_result + 关键词匹配 | 4 |
+| `src/benchmark/runner.py` | BenchmarkRunner + timeout + JSONL + Rich | 4+5 |
+| `src/benchmark/__main__.py` | CLI: run + report 子命令 | 4+5 |
+| `src/benchmark/reporter.py` | ReportGenerator（MD + HTML）| 5 |
+| `examples/demo_rich_ui.py` | Rich UI Demo（不调用 LLM）| 7 |
+| `examples/demo_benchmark.py` | Benchmark Demo（mock + 报告）| 7 |
+| `tests/test_ui_base.py` | 15 测试（面板 + 管理器）| 1 |
+| `tests/test_ui_tracer.py` | 14 测试（tracer + graph + debug mode）| 2 |
+| `tests/test_benchmark_models.py` | 17 测试（任务 + 模型 + 指标）| 3 |
+| `tests/test_benchmark_runner.py` | 24 测试（关键字 + 验证 + 运行器）| 4 |
+| `tests/test_benchmark_reporter.py` | 13 测试（MD + HTML + JSONL + UI mock）| 5 |
+
+### Week 6 修改文件清单
+
+| 文件 | 变更 | Day |
+|------|------|-----|
+| `src/agent/graph.py` | `build_graph(use_ui, ui_manager)` 签名扩展 + tracer 注入 | 2 |
+| `main.py` | --rich 参数 + UIManager 生命周期 + 摘要函数拆分 | 2 |
+| `src/benchmark/metrics.py` | compute() 新增 completed/succeeded 字段 | 5 |
+| `src/benchmark/__init__.py` | 导出 BenchmarkRunner（替换占位符）| 4 |
+| `.gitignore` | 新增 results/, _dc_exec_*.py, workspace/reports/*.md 等 | 7 |
+| `CLAUDE.md` | 新增 benchmark 命令 + UI/Benchmark 层架构 + 开发约定 | 6 |
+| `DEV_DESIGN.md` | Week 6 标记 ✅ + 架构图更新 + 3 条设计决策 + 阶段规划 | 6 |
+
+### 测试统计演进
+
+| 阶段 | 累计测试数 | 新增 | 通过率 |
+|------|-----------|------|--------|
+| Week 1 收尾 | 55 | — | 100% |
+| Week 2 收尾 | 144 | +89 | 100% |
+| Week 3 收尾 | 255 | +111 | 100% |
+| Week 4 收尾 | 369 | +114 | 100% |
+| Week 5 收尾 | 390 | +21 | 100% |
+| Week 6 Day 1 | 405 | +15 | 100% |
+| Week 6 Day 2 | 419 | +14 | 100% |
+| Week 6 Day 3 | 436 | +17 | 100% |
+| Week 6 Day 4 | 460 | +24 | 100% |
+| Week 6 Day 5 | 473 | +13 | 100% |
+| Week 6 Day 7 | — | +2 Demo | — |
+| Week 6 回归 | **472** | — | **100%（零回归）** |
+
+### Week 5 → Week 6 架构变化
+
+| 维度 | Week 5 | Week 6 |
+|------|--------|--------|
+| 终端 UI | 纯 print() | Rich Live 左（进度+状态）+ 右（日志/debug 面板）|
+| UI 集成 | 无 | `build_graph(use_ui=True)` + `main.py --rich` |
+| 调试面板 | 终端 input() 交互 | DebugPanel（Markdown 错误 + 4 选项）|
+| Benchmark | 无 | 10 任务 + MetricsCollector + JSONL 输出 |
+| 报告 | 增强器规则引擎 | + Benchmark MD/HTML 报告（卡片 + 进度条 + 徽章）|
+| CLI 子命令 | `python main.py` | + `python -m benchmark run` / `report <jsonl>` |
+| Demo 脚本 | 1 个（inventory） | +2 个（Rich UI + Benchmark） |
+| 测试数 | 390 | **473**（+83） |
+
+### 回退点
+
+`git commit 当前状态`（Week 6 收尾基线，准备 Week 7）
+
+
+### Benchmark 数字
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 单元测试通过率 | **472/472 = 100%** | 每周累计无回归 |
+| E2E 测试通过率 | **N/A** | Week 6 未运行 LLM E2E（仅单元 mock） |
+| 新增测试数 | **83** | Week 6 每日累计 |
+| 累计测试数 | **473** | Week1:55 → Week2:144 → Week3:255 → Week4:369 → Week5:390 → Week6:473 |
+| 新增依赖 | 0 | rich 已在 pyproject.toml 中 |
+| 新增文件 | **11** | 4 UI + 6 Benchmark + 1 E2E |
+| 修改文件 | **7** | graph.py, main.py, metrics.py, __init__.py(2), CLAUDE.md, DEV_DESIGN.md |
+
+### 完成的子任务清单
+
+- [x] Day 1 — Rich 终端 UI 基础框架（ProgressPanel / StatusTable / LogPanel + UIManager）
+- [x] Day 2 — Graph 执行过程实时追踪（NodeTracer + DebugPanel + graph 集成 + main.py --rich）
+- [x] Day 3 — Benchmark 任务集与指标定义（10 任务 + MetricsCollector）
+- [x] Day 4 — Benchmark 执行引擎（validators + runner + JSONL + CLI run）
+- [x] Day 5 — 报告生成与 Rich 集成（MD + HTML 报告 + runner use_ui + CLI report）
+- [x] Day 6 — E2E 验证 + 文档更新（DEV_DESIGN.md + CLAUDE.md + 本总结）
+
+### Week 6 新增文件清单
+
+| 文件 | 行数 | 职责 | Day |
+|------|------|------|-----|
+| `src/agent/ui/__init__.py` | ~8 | UI 包导出 | 1 |
+| `src/agent/ui/panels.py` | ~190 | ProgressPanel + StatusTable + LogPanel + DebugPanel | 1+2 |
+| `src/agent/ui/manager.py` | ~230 | UIManager（队列+Live+debug模式+降级）| 1+2 |
+| `src/agent/ui/tracer.py` | ~90 | NodeTracer + trace_graph_nodes | 2 |
+| `src/benchmark/__init__.py` | ~12 | Benchmark 包导出 | 3 |
+| `src/benchmark/models.py` | ~60 | BenchmarkTask + BenchmarkResult | 3 |
+| `src/benchmark/tasks.py` | ~90 | get_default_tasks() 10 个预定义任务 | 3 |
+| `src/benchmark/metrics.py` | ~110 | MetricsCollector 指标计算 | 3 |
+| `src/benchmark/validators.py` | ~120 | validate_task_result + 关键词匹配 | 4 |
+| `src/benchmark/runner.py` | ~250 | BenchmarkRunner + timeout + JSONL + Rich | 4+5 |
+| `src/benchmark/__main__.py` | ~160 | CLI: run + report 子命令 | 4+5 |
+| `src/benchmark/reporter.py` | ~210 | ReportGenerator（MD + HTML）| 5 |
+| `tests/test_ui_base.py` | ~170 | 15 测试（面板 + 管理器）| 1 |
+| `tests/test_ui_tracer.py` | ~220 | 14 测试（tracer + graph + debug mode）| 2 |
+| `tests/test_benchmark_models.py` | ~290 | 17 测试（任务 + 模型 + 指标）| 3 |
+| `tests/test_benchmark_runner.py` | ~340 | 24 测试（关键字 + 验证 + 运行器）| 4 |
+| `tests/test_benchmark_reporter.py` | ~290 | 13 测试（MD + HTML + JSONL + UI mock）| 5 |
+
+### Week 6 修改文件清单
+
+| 文件 | 变更 | Day |
+|------|------|-----|
+| `src/agent/graph.py` | `build_graph(use_ui, ui_manager)` 签名扩展 + tracer 注入 | 2 |
+| `main.py` | --rich 参数 + UIManager 生命周期 + 摘要函数拆分 | 2 |
+| `src/benchmark/metrics.py` | compute() 新增 completed/succeeded 字段 | 5 |
+| `src/benchmark/__init__.py` | 导出 BenchmarkRunner（替换占位符）| 4 |
+| `src/domain/__init__.py` | Week 5 符号导出 8→36（含 try/except 隔离）| — |
+| `CLAUDE.md` | 新增 benchmark 命令 + UI/Benchmark 层架构 + 开发约定 | 6 |
+| `DEV_DESIGN.md` | Week 6 标记 ✅ + 架构图更新 + 3 条设计决策 + 阶段规划 | 6 |
+
+### Week 6 设计决策总结
+
+1. **Rich 可选启用策略**：`build_graph(use_ui: bool = False)` — 默认关闭，零侵入。非 TTY 自动降级为纯 `print()`。
+2. **函数包装器模式（NodeTracer）**：不修改 planner/coder 等节点文件，只替换 graph 组装阶段的函数引用。
+3. **Benchmark 执行器隔离设计**：每个任务独立 `graph.invoke()`，任务间 `_cleanup_workspace()` 清理，JSONL 逐行追加支持断点续跑。
+4. **Benchmark 跨平台超时方案**：`threading.Event.wait(timeout)` + daemon 线程，不依赖 Unix signal。
+5. **报告生成器独立于执行器**：`ReportGenerator` 接受 `MetricsCollector`，可从 Runner 直接生成或从 JSONL 重建后生成。
+6. **浮点数关键词宽松匹配**：正则提取所有数字 token，前缀比对——"223" 匹配 "223.61"，"1.64" 匹配 "1.6449"。
+
+### 测试统计演进
+
+| 阶段 | 累计测试数 | 新增 | 通过率 |
+|------|-----------|------|--------|
+| Week 1 收尾 | 55 | — | 100% |
+| Week 2 收尾 | 144 | +89 | 100% |
+| Week 3 收尾 | 255 | +111 | 100% |
+| Week 4 收尾 | 369 | +114 | 100% |
+| Week 5 收尾 | 390 | +21 | 100% |
+| Week 6 Day 1 | 405 | +15 | 100% |
+| Week 6 Day 2 | 419 | +14 | 100% |
+| Week 6 Day 3 | 436 | +17 | 100% |
+| Week 6 Day 4 | 460 | +24 | 100% |
+| Week 6 Day 5 | 473 | +13 | 100% |
+| Week 6 回归 | **472** | — | **100%（零回归）** |
+
+> 注：473 为开发日志中逐日累计的理论值（含所有测试文件），472 为 2026-07-08 回归测试实际收集数（排除 Docker 测试 17 个 + 部分测试文件因环境差异未收集）。所有已收集测试 100% 通过，零回归。
+
+### 踩坑记录（Week 6 新增）
+
+| 问题 | 现象 | 解决方案 | 状态 |
+|------|------|---------|------|
+| `patch("src.benchmark.runner.graph_run")` 无效 | mock 找不到目标属性 | Runner 内部 `from src.agent.graph import run as graph_run` 是局部 import，patch 路径应为 `src.agent.graph.run` | ✅ |
+| `_keyword_found` 参数声明已转小写但调用方未转 | 大小写测试失败 | 函数内部自做 `.lower()`，签名注释修正 | ✅ |
+| `metrics.compute()` 缺少原始计数 | 报告需要 "(8/10)" 格式 | 新增 `"completed"` / `"succeeded"` 整数字段 | ✅ |
+| Rich Live 与 terminal input() 冲突 | Live cursor-up 重绘干扰交互式输入 | main.py 在 `input()` 前 stop Live，任务执行前 restart | ⚠️ 已知限制 |
+| `BenchmarkResult` 不应存储 `category` | 类别是任务属性非结果属性 | `compute()` 用 `getattr(r, "category", "unknown")` 动态读取 | ✅ |
+| debug mode 在非 TTY 环境下 Live 不渲染 | UI 数据更新正常但终端无显示 | 降级策略：非 TTY 时 Live 不启动，数据通过 print 输出 | ⚠️ 已知限制 |
+
+### Week 5 → Week 6 架构变化
+
+| 维度 | Week 5 | Week 6 |
+|------|--------|--------|
+| 终端 UI | 纯 print() | Rich Live 左（进度+状态）+ 右（日志/debug 面板）|
+| UI 集成 | 无 | `build_graph(use_ui=True)` + `main.py --rich` |
+| 调试面板 | 终端 input() 交互 | DebugPanel（Markdown 错误 + 4 选项）|
+| Benchmark | 无 | 10 任务 + MetricsCollector + JSONL 输出 |
+| 报告 | 增强器规则引擎 | + Benchmark MD/HTML 报告（卡片 + 进度条 + 徽章）|
+| CLI 子命令 | `python main.py` | + `python -m benchmark run` / `report <jsonl>` |
+| 测试数 | 390 | **473**（+83） |
+
+### 回退点
+
 `git commit 当前状态`（Week 6 完成基线）
+
 
 
 

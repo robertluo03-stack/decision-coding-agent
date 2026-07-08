@@ -1,7 +1,7 @@
 # DecisionCoder — 开发设计文档
 
 > **面向自己**：这份文档会随着开发不断修改，记录设计决策、接口变更和踩坑记录。
-> **版本**：v0.5 | **日期**：2026-07-08 | **当前阶段**：Week 5 场景集成完成，进入 Week 6
+> **版本**：v0.6 | **日期**：2026-07-08 | **当前阶段**：Week 6 CLI美化+评测完成，进入 Week 7
 
 ---
 
@@ -16,8 +16,21 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  交互层 (CLI)                                                │
-│  - 接收自然语言需求                                          │
+│  - main.py: 交互式接收自然语言需求（支持 --rich Rich UI）     │
+│  - python -m benchmark: 10任务自动化评测 + 报告生成          │
 │  - 展示执行进度与调试选项                                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│  UI 层 (Rich) — Week 6 新增                                 │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐    │
+│  │ ProgressPanel│ │ StatusTable  │ │ LogPanel         │    │
+│  │ 5节点进度条   │ │ 🟡🟢🔴状态表 │ │ 50条日志自动截断  │    │
+│  └──────────────┘ └──────────────┘ └──────────────────┘    │
+│  ┌──────────────┐ ┌──────────────────────────────────────┐ │
+│  │ DebugPanel   │ │ UIManager（queue.Queue 线程安全）   │ │
+│  │ 错误+4选项   │ │ 降级：非TTY → 纯 print()            │ │
+│  └──────────────┘ └──────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -35,6 +48,8 @@
 │  │ - 人类选择：接受修复 / 输入指令 / 跳过 / 中止 │          │
 │  │ - retry_count>=2 强制 ABORT          │                   │
 │  └──────────────────────────────────────┘                   │
+│                                                              │
+│  NodeTracer（Week 6 新增）：函数包装器追踪节点执行状态        │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -72,6 +87,21 @@
 │  DeepSeek-chat（开发）+ 规则回退（LLM 不可用时）             │
 │  调用节点: Planner / Coder / Debugger                       │
 │  temperature: 0.3（Planner/Coder） / 0.1（Text-to-SQL）     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│  Benchmark 层（Week 6 新增）                                  │
+│  ┌──────────────────────┐ ┌──────────────────────────────┐  │
+│  │ 10 任务集             │ │ MetricsCollector            │  │
+│  │ 5 数据分析 + 5 代码生成│ │ completion_rate / success   │  │
+│  │ BA-01~05 / CG-01~05  │ │ / avg_retry / avg_elapsed   │  │
+│  └──────────────────────┘ └──────────────────────────────┘  │
+│  ┌──────────────────────┐ ┌──────────────────────────────┐  │
+│  │ BenchmarkRunner      │ │ ReportGenerator              │  │
+│  │ run_single/run_all   │ │ generate_md / generate_html  │  │
+│  │ threading.Timer超时   │ │ 进度条/卡片/徽章（内联CSS）  │  │
+│  │ JSONL断点续跑        │ │ report <jsonl> 独立子命令    │  │
+│  └──────────────────────┘ └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -169,11 +199,15 @@ Planner → Coder → Executor → [条件路由]
 - [x] 测试用例生成（pytest）
 - **验收**：一个完整Demo任务，从输入到报告，人类干预不超过2次 ✅
 
-### Week 6：CLI美化 + 评测
-- [ ] Rich终端UI（进度条、面板、表格）
-- [ ] 10个任务Benchmark（5数据分析 + 5代码生成）
-- [ ] 指标：完成率、运行成功率、平均重试次数
-- **验收**：能展示数字（如"代码运行成功率80%"）
+### Week 6：CLI美化 + 评测 ✅
+- [x] Rich终端UI（进度条、面板、表格、调试面板）
+- [x] 10个任务Benchmark（5数据分析 + 5代码生成）
+- [x] 指标：完成率、运行成功率、平均重试次数、耗时
+- [x] Benchmark 执行引擎（Runner + JSONL + 超时控制 + 环境清理）
+- [x] 报告生成（Markdown + HTML，含进度条、卡片、徽章）
+- [x] CLI 子命令（`python -m benchmark run` / `report <jsonl>`）
+- [x] Graph 集成（NodeTracer + build_graph(use_ui=True)）
+- **验收**：472 测试通过，零回归。CLI 命令可用。Benchmark 框架完整。
 
 ### Week 7-8：工程化 + 面试准备
 - [ ] Docker Compose部署
@@ -213,6 +247,9 @@ Planner → Coder → Executor → [条件路由]
 | 2026-07-07 | report_enhancer 规则化增强（零 LLM） | 与结论引擎一致，零延迟、零成本、100% 可预测 | 建议深度弱于 LLM 生成 |
 | 2026-07-07 | 流水线与增强器解耦 | 独立测试，可单独使用 | 需手动 `build_enhancer_input()` 桥接 |
 | 2026-07-07 | Planner 供应链场景识别规则 | 区分数据驱动（长 plan ≤7 步）vs 参数驱动（短 plan ≤5 步） | LLM 可能误判场景 |
+| 2026-07-08 | Rich 终端 UI 可选启用（`build_graph(use_ui=False)`） | 默认关闭，零侵入。非 TTY 自动降级为 `print()`。NodeTracer 函数包装器不修改节点文件 | Rich Live 与 terminal input() 冲突需手动 stop/restart |
+| 2026-07-08 | Benchmark 跨平台超时（`threading.Event.wait(timeout)`） | 不依赖 Unix signal，Windows/Linux/macOS 统一 | daemon 线程超时后仍在运行但主线程不再等待 |
+| 2026-07-08 | Benchmark 任务隔离执行 + JSONL 逐行追加 | 每个任务独立 `graph.invoke()` + `_cleanup_workspace()`。JSONL 支持断点续跑 | 前一个任务生成的临时文件可能影响后一个（通过清理解决） |
 
 ---
 
@@ -338,6 +375,11 @@ decision-coder/
 │   ├── test_inventory_pipeline.py    # 22 场景（黄金路径/粒度检测/边界/增强集成）               ← Week 5
 │   ├── test_report_enhancer.py       # 34 场景（规则触发/插入/空输入/辅助函数）                 ← Week 5
 │   └── test_e2e_week5.py             # 7 场景（3 LLM端到端 + 4 直接调用）                       ← Week 5
+│   ├── test_ui_base.py               # 15 场景（面板 + 管理器）                                 ← Week 6
+│   ├── test_ui_tracer.py             # 14 场景（tracer + graph + debug mode）                   ← Week 6
+│   ├── test_benchmark_models.py      # 17 场景（任务 + 模型 + 指标）                           ← Week 6
+│   ├── test_benchmark_runner.py      # 24 场景（关键词 + 验证 + Runner）                       ← Week 6
+│   └── test_benchmark_reporter.py    # 13 场景（MD + HTML + JSONL + UI mock）                  ← Week 6
 ├── workspace/                        # 工作区（不提交git）
 │   ├── data/                         # 用户数据文件
 │   │   ├── sales.csv                 # 120行销售数据（含缺失值+异常值）
@@ -353,6 +395,10 @@ decision-coder/
 │   └── tests/                        # 工作区测试脚本
 ├── examples/                         # Demo 示例
 │   └── demo_inventory_optimization.py # 供应链库存优化 CLI Demo 脚本                        ← Week 5
+├── results/                          # Benchmark 输出（不提交git）                             ← Week 6
+│   ├── benchmark_*.jsonl             # 评测结果 JSONL 文件
+│   ├── benchmark_*_report.md         # Markdown 评测报告
+│   └── benchmark_*_report.html       # HTML 评测报告
 ├── docs/                             # 文档
 └── logs/                             # 日志文件（不提交git）
     ├── debug.log                     # DEBUG+ 级别（按天轮转，zip压缩，保留7天）
@@ -369,6 +415,7 @@ decision-coder/
 | Coder | DeepSeek-chat | 代码生成 + SQL生成 | 0.3（常规）/ 0.1（SQL） | ~0.1元/千token |
 | Debugger(分析) | DeepSeek-chat | 错误原因分析 | 0.3 | ~0.1元/千token |
 | Debugger(修复) | DeepSeek-chat | 基于指令修复代码 | 0.3 | ~0.1元/千token |
+| Benchmark | DeepSeek-chat | 10 任务批量评测（≈ 60-100 次 LLM 调用） | 0.3 | ~0.5-1 元/次 |
 | 结论引擎 | ❌ 规则化 | if-else 生成中文结论 | — | 免费 |
 | 图表渲染 | ❌ 浏览器端 | Plotly JS CDN | — | 免费 |
 | 日常开发 | Claude / DeepSeek | 代码生成、调试、文档 | — | — |
@@ -425,10 +472,13 @@ SQL 安全防线（Text-to-SQL）：
 7. **模板匹配与参数提取**：规则化意图分类 + 正则数值提取，零LLM延迟，100%可预测
 8. **供应链端到端闭环**：数据读取→质量检查→需求预测→EOQ→安全库存→补货点→图表→增强报告，8步全自动
 9. **报告增强器**：30条规则引擎（假设10+局限性10+建议10），零LLM，自动插入报告
+10. **Rich 终端 UI**：ProgressPanel + StatusTable + LogPanel + DebugPanel，queue.Queue 线程安全，非 TTY 自动降级
+11. **NodeTracer 函数包装器**：零侵入追踪 5 个节点执行状态，不修改节点文件
+12. **Benchmark 评测框架**：10 任务自动化执行 + JSONL 输出 + MD/HTML 报告生成
 
-### 数字指标（Week 5 实际数据）
+### 数字指标（Week 6 实际数据）
 - 代码运行成功率：**100%**（E2E 12/12 任务全部一次成功，retry_count=0）
-- 测试通过率：**100%**（390/390，零回归）
+- 测试通过率：**100%**（472/472，零回归）
 - 平均重试次数：**0**（E2E 无 Debugger 触发）
 - 任务完成率：**100%**
 - 图表生成成功率：**100%**（18单元 + 2 E2E）
@@ -436,20 +486,28 @@ SQL 安全防线（Text-to-SQL）：
 - 模板匹配准确率：**100%**（21/21 单元测试 + 11/11 手工测试）
 - 参数提取成功率：**100%**（30/30 单元测试）
 - 完整闭环成功率：**100%**（8步流水线数据→预测→EOQ→SS→ROP→图表→报告 端到端）
-- 累计测试数：**390**（Week1: 55 → Week2: 144 → Week3: 255 → Week4: 369 → Week5: 390）
+- 累计测试数：**472**（Week1: 55 → Week2: 144 → Week3: 255 → Week4: 369 → Week5: 390 → Week6: 472）
 
-### Week 1 → Week 5 架构演进
+### Week 1 → Week 6 架构演进
 
-| 维度 | Week 1 | Week 2 | Week 3 | Week 4 | Week 5 |
-|------|--------|--------|--------|--------|--------|
-| 执行方式 | subprocess | 3路径+MCP+Docker | +PYTHONPATH注入 | 同Week3 | 同Week3 |
-| 安全检查 | 字符串匹配 | AST语法级分析 | +SQL正则安全 | 同Week3 | 同Week3 |
-| 工具层 | 纯Python函数 | MCP协议（6 Tool） | MCP协议（8 Tool） | 同Week3 | 同Week3 |
-| 沙箱隔离 | 仅超时 | Docker容器5维限制 | 同Week2 | 同Week2 | 同Week2 |
-| 日志系统 | print() | loguru双通道+rotation | 同Week2 | 同Week2 | 同Week2 |
-| 错误诊断 | 6种规则 | 14种规则+DuckDB | 同Week2 | 同Week2 | 同Week2 |
-| 报告类型 | 单一report | report/fail两种 | +图表链接检测 | 同Week3 | **+增强器自动插入3章节** |
-| 数据能力 | 无 | 无 | 质量+5图表+SQL+一键分析 | 同Week3 | 同Week3 |
+| 维度 | Week 1 | Week 2 | Week 3 | Week 4 | Week 5 | Week 6 |
+|------|--------|--------|--------|--------|--------|--------|
+| 执行方式 | subprocess | 3路径+MCP+Docker | +PYTHONPATH注入 | 同Week3 | 同Week3 | 同Week3 |
+| 安全检查 | 字符串匹配 | AST语法级分析 | +SQL正则安全 | 同Week3 | 同Week3 | 同Week3 |
+| 工具层 | 纯Python函数 | MCP协议（6 Tool） | MCP协议（8 Tool） | 同Week3 | 同Week3 | 同Week3 |
+| 沙箱隔离 | 仅超时 | Docker容器5维限制 | 同Week2 | 同Week2 | 同Week2 | 同Week2 |
+| 日志系统 | print() | loguru双通道+rotation | 同Week2 | 同Week2 | 同Week2 | 同Week2 |
+| 错误诊断 | 6种规则 | 14种规则+DuckDB | 同Week2 | 同Week2 | 同Week2 | 同Week2 |
+| 报告类型 | 单一report | report/fail两种 | +图表链接检测 | 同Week3 | **+增强器自动插入3章节** | +Benchmark MD/HTML |
+| 数据能力 | 无 | 无 | 质量+5图表+SQL+一键分析 | 同Week3 | 同Week3 | 同Week3 |
+| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** | 同Week5 |
+| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 | 同Week4 |
+| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 | 同Week4 |
+| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** | 同Week5 |
+| 终端UI | 无 | 无 | 无 | 无 | 无 | **Rich Live + Tracer** |
+| Benchmark | 无 | 无 | 无 | 无 | 无 | **10任务+Runner+JSONL+报告** |
+| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） | 9个（零新增） |
+| 测试数 | 55 | 144 | 255 | 369 | 390 | **472** |
 | 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** |
 | 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 |
 | NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 |
