@@ -53,7 +53,7 @@ class UIManager:
             if force_terminal is not None
             else sys.stdout.isatty()
         )
-        self._console = Console(force_terminal=bool(self._force_terminal))
+        self._console = Console(force_terminal=self._force_terminal if self._force_terminal is not None else self._is_tty)
         self._progress_panel = ProgressPanel()
         self._status_table = StatusTable()
         self._log_panel = LogPanel()

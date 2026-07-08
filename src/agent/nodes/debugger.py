@@ -28,6 +28,15 @@ from src.agent.nodes.prompts.debugger_user import (
     build_fix_user_message,
 )
 
+# 模块级 UIManager 引用，由 graph.py 在 build_graph 时注入
+_ui_manager: Any = None
+
+
+def set_ui_manager(ui: Any) -> None:
+    """由 build_graph() 调用，注入 UIManager 实例供 _safe_input 使用。"""
+    global _ui_manager
+    _ui_manager = ui
+
 # ---------------------------------------------------------------------------
 # 代码块提取
 # ---------------------------------------------------------------------------
@@ -79,6 +88,8 @@ def _get_deepseek_llm():
         model="deepseek-chat",
         api_key=api_key,
         temperature=0.3,
+        request_timeout=120,
+        max_retries=2,
     )
 
 
@@ -817,6 +828,7 @@ def _safe_input(prompt: str = "") -> str:
     """安全的 input() 包装。
 
     处理 EOFError 和 KeyboardInterrupt，默认返回 "4"（中止）。
+    Rich Live 模式下会先暂停 Live 再读取输入，避免终端光标重绘竞争。
 
     Args:
         prompt: 输入提示
@@ -825,9 +837,22 @@ def _safe_input(prompt: str = "") -> str:
         用户输入字符串
     """
     try:
+        # 暂停 Rich Live（如果存在），避免屏幕重绘干扰 input() 缓冲区
+        if _ui_manager is not None and _ui_manager._live is not None:
+            try:
+                _ui_manager._live.stop()
+            except Exception:
+                pass
         return input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
         return "4"
+    finally:
+        # 恢复 Rich Live
+        if _ui_manager is not None and _ui_manager._live is not None:
+            try:
+                _ui_manager._live.start()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,8 @@ def _generate_plan_with_llm(query: str) -> list[str]:
         model="deepseek-chat",
         api_key=api_key,
         temperature=0.3,
+        request_timeout=120,
+        max_retries=2,
     )
 
     messages = [

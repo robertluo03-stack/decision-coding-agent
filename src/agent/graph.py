@@ -145,6 +145,10 @@ def build_graph(
     if use_ui and ui_manager is not None:
         from src.agent.ui.tracer import trace_graph_nodes
 
+        # 注入 UIManager 给 debugger 的 _safe_input 使用
+        from src.agent.nodes import debugger as debugger_module
+        debugger_module.set_ui_manager(ui_manager)
+
         node_funcs = {
             "Planner": planner_fn,
             "Coder": coder_fn,

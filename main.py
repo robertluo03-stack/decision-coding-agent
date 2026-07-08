@@ -202,28 +202,6 @@ def _print_rich_mode_status(is_tty: bool) -> None:
         print("⚠️ 非 TTY 环境，Rich UI 降级为纯文本模式")
 
 
-def _ensure_live_stopped_for_input(ui_manager: object) -> None:
-    """暂停 Live 以允许 input() 正常读取。
-
-    Rich Live 使用 cursor-up 重绘，会干扰终端 input()。
-    暂停后手动清屏为 input 提供干净空间。
-    """
-    if hasattr(ui_manager, "_live") and ui_manager._live is not None:
-        try:
-            ui_manager._live.stop()
-        except Exception:
-            pass
-
-
-def _restart_live_for_input(ui_manager: object) -> None:
-    """重新启动 Live（任务执行前）。"""
-    if hasattr(ui_manager, "_live") and ui_manager._live is not None:
-        try:
-            ui_manager._live.start()
-        except Exception:
-            pass
-
-
 def main() -> None:
     """DecisionCoder CLI 主入口。"""
     # ---- 检查是否启用 Rich UI ----
@@ -237,12 +215,11 @@ def main() -> None:
     from src.agent.graph import build_graph
     from src.agent.state import AgentState
 
-    # ---- Rich UI 初始化 ----
+    # ---- Rich UI 初始化（Live 延迟到 graph 执行前启动，避免遮挡 banner 和 input prompt） ----
     ui_manager = None
     if use_rich:
         from src.agent.ui.manager import UIManager
         ui_manager = UIManager()
-        ui_manager.start()
         _print_rich_mode_status(ui_manager._is_tty)
 
     try:
@@ -259,15 +236,7 @@ def main() -> None:
     # ---- 主循环 ----
     while True:
         try:
-            # 读取用户输入
-            prompt = "🔍 请输入任务 > "
-            if use_rich and ui_manager is not None and ui_manager._is_tty:
-                # 在 Rich 模式下暂停 Live 以允许 input()
-                _ensure_live_stopped_for_input(ui_manager)
-                user_input = input(prompt).strip()
-                _restart_live_for_input(ui_manager)
-            else:
-                user_input = input(prompt).strip()
+            user_input = input("🔍 请输入任务 > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\n👋 再见！")
             break
@@ -311,6 +280,12 @@ def main() -> None:
         try:
             # 调用 Graph
             import uuid
+
+            # 启动 Rich Live（在 graph 执行前，确保 UI 覆盖执行过程）
+            if use_rich and ui_manager is not None:
+                ui_manager.start()
+                print(f"\n🚀 开始执行: {user_input[:80]}{'...' if len(user_input) > 80 else ''}\n")
+
             config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
             result = graph.invoke(initial_state, config)
 
@@ -328,9 +303,18 @@ def main() -> None:
             print("  💡 提示: 请检查需求是否明确，或尝试更简单的任务。")
             continue
 
+        finally:
+            # 无论成功还是异常，关闭 Rich Live 回到主屏幕
+            if use_rich and ui_manager is not None:
+                ui_manager.stop()
+
         if not use_rich:
             print()
 
     # ---- 清理 Rich UI ----
     if ui_manager is not None:
         ui_manager.stop()
+
+
+if __name__ == "__main__":
+    main()

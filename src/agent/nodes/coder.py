@@ -105,6 +105,8 @@ def _generate_code_with_llm(
         model="deepseek-chat",
         api_key=api_key,
         temperature=0.3,
+        request_timeout=120,
+        max_retries=2,
     )
 
     messages = [

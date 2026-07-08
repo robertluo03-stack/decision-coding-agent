@@ -341,6 +341,8 @@ def _call_llm_for_sql(prompt_text: str, api_key: str | None = None) -> str:
         model="deepseek-chat",
         api_key=resolved_key,
         temperature=0.1,  # 低温度提高 SQL 正确率
+        request_timeout=120,
+        max_retries=2,
     )
 
     # System 角色设置指令，User 角色放完整 prompt
