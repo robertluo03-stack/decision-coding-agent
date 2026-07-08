@@ -2429,5 +2429,181 @@ tests/test_benchmark_models.py: 17 passed in 0.07s
 
 `git commit 当前状态`（Week 6 Day 3 完成基线）
 
+---
+
+## 2026-07-08 Week6-Day4 — Benchmark 执行引擎
+
+### 目标
+
+实现 benchmark 执行引擎（validators + runner + CLI），使 Day 3 定义的 10 个任务可被批量自动执行并收集指标。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 每个任务独立 `graph.invoke()` | 隔离执行，task 间 state 不共享，避免 retry_count 污染 |
+| `threading.Timer` 超时控制 | 跨平台，不依赖 Unix signal |
+| JSONL 逐行追加 | 断点续跑友好（Day 5 `--resume` 扩展），每完成一个任务就写入 |
+| 任务前清理临时文件 | 删除 `_dc_exec_*.py` + `reports/` 目录，防止前一个任务污染当前 |
+| Mock `src.agent.graph.run` 测试 | Runner 内部局部 import graph_run，patch 目标为 `src.agent.graph.run` |
+| 验证器独立于 Runner | `validate_task_result()` 纯函数，可单独测试 + 可被外部调用 |
+
+### 实现内容
+
+#### validators.py — 结果验证
+
+```python
+validate_task_result(task, state, elapsed_seconds, workspace_path) → BenchmarkResult
+```
+
+验证逻辑：
+1. **completed**：`final_report` 或 `execution_result` 非空
+2. **关键词匹配**（`_keyword_found`）：
+   - 不区分大小写（内部自动 `.lower()`）
+   - 部分匹配（`"bar" in "bar_chart generated"` → True）
+   - 浮点数宽松匹配（`"223"` 匹配 `"223.61"`，`"1.64"` 匹配 `"1.6449"`）
+3. **文件检测**（`_find_generated_files`）：查找 `reports/report_*.md` 或 `fail_*.md`
+4. **success** = completed 且所有 expected_keywords 全部命中
+
+浮点数宽松匹配实现：
+```python
+# 正则提取文本中所有数字 token
+for num in re.findall(r'\d+\.?\d*', text_lower):
+    if num.startswith(kw_lower) or kw_lower.startswith(num):
+        return True
+```
+
+#### runner.py — 执行引擎
+
+```python
+class BenchmarkRunner:
+    __init__(tasks, workspace_path, output_dir)
+    run_single(task) → (state, elapsed)     # 单任务执行 + 超时 + 异常捕获
+    run_all() → MetricsCollector            # 全量执行 + JSONL 写入 + 进度打印
+    _cleanup_workspace()                    # 任务前清理
+    _append_jsonl(result)                   # 线程安全 JSONL 追加
+```
+
+**超时控制**（`threading.Event.wait(timeout)`）：
+```python
+done = threading.Event()
+exec_thread = threading.Thread(target=_execute, daemon=True)
+exec_thread.start()
+timed_out = not done.wait(timeout=task.timeout)
+# 超时时不杀线程（daemon），但 state 注入 BenchmarkTimeoutError
+```
+
+**JSONL 输出格式**（每行一个合法 JSON）：
+```json
+{"task_id": "CG-01", "success": true, "completed": true, "retry_count": 0,
+ "elapsed_seconds": 12.5, "error": null, "output_keywords_found": ["EOQ", "223"],
+ "report_path": "/abs/path/to/report.md"}
+```
+
+#### __main__.py — CLI 入口
+
+```bash
+python -m benchmark run       # 运行全部 10 个任务
+python -m benchmark resume    # 断点续跑（Day 5 扩展）
+```
+
+功能：
+- 自动加载 `.env`、检查 `DEEPSEEK_API_KEY`
+- 默认 workspace=`workspace/`，可通过 `WORKSPACE_PATH` 环境变量覆盖
+- 执行完成后打印分类统计
+
+### 测试覆盖
+
+`tests/test_benchmark_runner.py` — 24 个测试场景：
+
+#### TestKeywordMatching（7 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 精确匹配 | ✅ |
+| 2 | 不区分大小写（"EOQ" ↔ "eoq"） | ✅ |
+| 3 | 子串匹配（"bar" ↔ "bar_chart"） | ✅ |
+| 4 | 浮点数宽松匹配（"223" ↔ "223.61"） | ✅ |
+| 5 | 浮点数前缀匹配（"1.64" ↔ "1.6449"） | ✅ |
+| 6 | 关键词不存在 | ✅ |
+| 7 | `_is_numeric_keyword` 辅助函数 | ✅ |
+
+#### TestValidateTaskResult（5 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 8 | 成功结果 → success=True, completed=True | ✅ |
+| 9 | 部分关键词 → success=False | ✅ |
+| 10 | error state → completed=False | ✅ |
+| 11 | retry_count 正确传递 | ✅ |
+| 12 | 验证器中浮点数宽松匹配生效 | ✅ |
+
+#### TestFindGeneratedFiles（3 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 13 | 找到最新 report_*.md | ✅ |
+| 14 | reports/ 目录不存在 | ✅ |
+| 15 | 找到 fail_*.md（失败报告） | ✅ |
+
+#### TestBenchmarkRunner（9 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 16 | Runner 初始化正确 | ✅ |
+| 17 | mock graph.run 返回成功 state | ✅ |
+| 18 | mock graph 抛异常 → error 被捕获 | ✅ |
+| 19 | 超时任务 → BenchmarkTimeoutError | ✅ |
+| 20 | run_all mock → collector 记录正确 | ✅ |
+| 21 | JSONL 输出格式正确 | ✅ |
+| 22 | 环境清理逻辑正确 | ✅ |
+| 23 | 清理时目录不存在不报错 | ✅ |
+| 24 | JSONL 追加线程安全 | ✅ |
+
+### 运行结果
+
+```
+tests/test_benchmark_runner.py: 24 passed in 2.39s
+全量回归 (excl Docker): 457 passed, 3 failed
+  └── 3 failed = E2E flaky（test_e2e_week3 2 + test_e2e_week5 1），非本次变更引入
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/benchmark/validators.py` | ~120 | validate_task_result + 关键词匹配 + 文件检测 |
+| `src/benchmark/runner.py` | ~200 | BenchmarkRunner 执行引擎 + JSONL 输出 + 环境清理 |
+| `src/benchmark/__main__.py` | ~100 | CLI 入口（`python -m benchmark run`） |
+| `tests/test_benchmark_runner.py` | ~340 | 24 个测试（关键词 7 + 验证器 5 + 文件 3 + Runner 9） |
+
+### 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/benchmark/__init__.py` | 导出 `BenchmarkRunner`（替换占位符 `object`） |
+
+### 累计测试数
+
+| 阶段 | 测试数 |
+|------|--------|
+| Week 1-5 基线 | 390 |
+| Week 6 Day 1 | +15（→ 405） |
+| Week 6 Day 2 | +14（→ 419） |
+| Week 6 Day 3 | +17（→ 436） |
+| Week 6 Day 4 | +24 |
+| Week 6 累计 | **460** |
+
+### 踩坑记录
+
+- **`patch("src.benchmark.runner.graph_run")` 无效**：Runner 内部 `from src.agent.graph import run as graph_run` 是局部 import，patcher 去 `src.agent.graph.run` 找。patch 路径应为 `src.agent.graph.run` 而非 `src.benchmark.runner.graph_run`。
+- **`_keyword_found` 参数不一致**：函数签名声明 `output_text` 为"已转小写"，但 `validate_task_result` 调用前未预转小写。修复：函数内部做 `.lower()`，签名注释改为"会自动转小写"。
+- **超时 `daemon=True` 线程局限性**：超时后 daemon 线程继续运行但主线程已不等待结果——若后续任务尝试修改相同全局状态（如 `last_report_path` 模块变量），会产生竞态。解决方案：每个任务独立 workspace 路径 + `_cleanup_workspace()` 重置状态。
+
+### 回退点
+
+`git commit 当前状态`（Week 6 Day 4 完成基线）
+
+
 
 

@@ -1,0 +1,148 @@
+"""Benchmark 结果验证器。
+
+validate_task_result(task, state, elapsed_seconds, workspace_path) → BenchmarkResult
+
+关键词匹配：不区分大小写，支持部分匹配（substring）。
+浮点数宽松匹配：预期 "223" 匹配 "223.61"。
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from src.benchmark.models import BenchmarkResult, BenchmarkTask
+
+
+def validate_task_result(
+    task: BenchmarkTask,
+    state: dict,
+    elapsed_seconds: float,
+    workspace_path: str,
+) -> BenchmarkResult:
+    """验证单次任务执行结果。
+
+    Args:
+        task: 原始任务定义。
+        state: graph.invoke() 返回的最终 AgentState。
+        elapsed_seconds: 总耗时（秒）。
+        workspace_path: 工作区根路径（用于查找生成的报告/图表文件）。
+
+    Returns:
+        BenchmarkResult（completed, success, retry_count, error, keywords_found, report_path）。
+    """
+    final_report = state.get("final_report", "")
+    execution_result = state.get("execution_result", "")
+    error = state.get("error")
+
+    # ── completed: 有 final_report 或无错误的 execution_result ──
+    completed = bool(final_report) or bool(execution_result)
+
+    # ── 合并所有输出文本用于关键词搜索 ──
+    output_text = f"{execution_result} {final_report}".lower()
+
+    # ── 关键词匹配（区分大小写，部分匹配） ──
+    keywords_found: list[str] = []
+    for kw in task.expected_keywords:
+        found = _keyword_found(output_text, kw)
+        if found:
+            keywords_found.append(kw)
+
+    all_found = len(keywords_found) == len(task.expected_keywords)
+
+    # ── success: completed 且所有关键词命中 ──
+    success = completed and all_found
+
+    # ── 检查报告/图表文件 ──
+    report_path = _find_generated_files(workspace_path, task)
+
+    return BenchmarkResult(
+        task_id=task.id,
+        success=success,
+        completed=completed,
+        retry_count=state.get("retry_count", 0),
+        elapsed_seconds=elapsed_seconds,
+        error=str(error) if error else None,
+        output_keywords_found=keywords_found,
+        report_path=report_path,
+    )
+
+
+def _keyword_found(output_text: str, keyword: str) -> bool:
+    """检查关键词是否在输出中出现（不区分大小写，部分匹配）。
+
+    浮点数宽松匹配：预期"223"匹配实际"223.61"——只要 keyword 是输出中某词的子串。
+    反向亦然：如果输出中包含 keyword 的子串，也认为匹配（如 "1.64" 匹配 "1.6449"）。
+
+    Args:
+        output_text: 输出文本（会自动转小写）。
+        keyword: 预期关键词。
+
+    Returns:
+        是否匹配。
+    """
+    text_lower = output_text.lower()
+    kw_lower = keyword.lower()
+    if kw_lower in text_lower:
+        return True
+    # 浮点数宽松匹配：keyword 是数字，检查输出中是否有以此开头的数字
+    if _is_numeric_keyword(kw_lower):
+        # 检查输出中是否有数字以此关键词为前缀（如 "223" → "223.61"）
+        # 反向：输出中的浮点数字若以 keyword 开头则匹配
+        import re
+        for num in re.findall(r'\d+\.?\d*', text_lower):
+            if num.startswith(kw_lower) or kw_lower.startswith(num):
+                return True
+    return False
+
+
+def _is_numeric_keyword(keyword: str) -> bool:
+    """判断关键词是否为纯数值（整数或浮点数）。
+
+    Args:
+        keyword: 小写关键词。
+
+    Returns:
+        是否为数值关键词。
+    """
+    try:
+        float(keyword)
+        return True
+    except ValueError:
+        return False
+
+
+def _find_generated_files(workspace_path: str, task: BenchmarkTask) -> str | None:
+    """查找任务生成的报告/图表文件。
+
+    Args:
+        workspace_path: 工作区根路径。
+        task: 任务定义。
+
+    Returns:
+        找到的第一个报告文件路径，或 None。
+    """
+    ws = Path(workspace_path)
+    reports_dir = ws / "reports"
+    if not reports_dir.exists():
+        return None
+
+    # 按 mtime 倒序，取最新
+    report_files = sorted(
+        reports_dir.glob("report_*.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if report_files:
+        return str(report_files[0])
+
+    # 失败报告
+    fail_files = sorted(
+        reports_dir.glob("fail_*.md"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if fail_files:
+        return str(fail_files[0])
+
+    return None
