@@ -1725,3 +1725,155 @@ else:
 ### 回退点
 
 `git commit 当前状态`（Week 5 Day 4 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day5 — 创建供应链库存分析 Demo 数据
+
+### 目标
+
+创建 [workspace/data/sku_inventory.csv](workspace/data/sku_inventory.csv) — Week 5 端到端闭环演示用数据集。
+
+### 数据规格
+
+| 属性 | 值 |
+|------|-----|
+| 行数 | 24 行（2 年月度数据，2024-01 ~ 2025-12） |
+| 列 | `month, sku_id, demand, unit_cost` |
+| 趋势 | 轻微上升（80 → 142），逐月增 2~5 单位 |
+| 异常值 1 | 2024-06：demand=150（偏高，偏离趋势 ~50 单位） |
+| 异常值 2 | 2025-02：demand=70（偏低，偏离趋势 ~45 单位） |
+| unit_cost | 统一 50.0 |
+| 编码 | UTF-8 |
+
+### 设计意图
+
+数据集包含天然的数据质量挑战（异常值）、可辨识的上升趋势（Holt 方法适用）、以及足够的长度（24 期 → 预测置信度较高），适合演示 inventory_pipeline 全流程：质量检测识别异常值 → 趋势预测自动选择 Holt → EOQ/SS/ROP 参数计算 → 增强报告给出"预测精度良好可降低安全库存"等建议。
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 5 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day6 — 供应链库存优化 Demo 脚本
+
+### 目标
+
+创建 [examples/demo_inventory_optimization.py](examples/demo_inventory_optimization.py) — 从命令行接收 CSV 路径，调用 inventory_pipeline 一键分析，打印结构化中文摘要。
+
+### 运行方式
+
+```bash
+python examples/demo_inventory_optimization.py workspace/data/sku_inventory.csv
+python examples/demo_inventory_optimization.py workspace/data/sku_inventory.csv workspace/reports/
+```
+
+### 输出示例（sku_inventory.csv）
+
+```
+============================================================
+  供应链库存优化分析
+============================================================
+
+📊 分析结果摘要
+
+  【数据质量】      综合评分 : 100/100
+  【需求预测】      方法 : Holt 双参数线性趋势 | 预测值 : 144.9, 147.8, 150.7 | MAPE : 10.84%
+  【EOQ】           EOQ : 366.6 件 | 年订货次数 : 3.7 次 | 年总成本 : 733.21
+  【安全库存】       安全库存量 : 35.6 件 | Z 值 : 1.6449（95% 服务水平）
+  【补货点】        补货点 : 147.6 | 订货量 : 367 | (ROP, Q) 策略
+  【图表】          需求趋势图 + 参数对比图（2 个 HTML）
+  【报告】          10 章节增强 Markdown 报告
+```
+
+### 功能特性
+
+- 零 LLM 依赖，纯 Python + 规则引擎
+- 完善的错误处理（参数缺失、文件不存在、列名校验失败）
+- 结构化中文摘要（数据质量 → 预测 → EOQ → SS → ROP → 图表 → 报告）
+- 自适应输出（仅打印成功的步骤，不显示 None）
+- 条件提示（MAPE < 10% → "预测精度良好"）
+
+### 验证
+
+- 语法检查通过（py_compile）
+- 以 sku_inventory.csv 端到端运行成功
+- 生成报告含 10 章节（含增强器插入的 7/8/9 章）
+- 图表 2 个 HTML 成功生成
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 6 完成基线）
+
+---
+
+## 2026-07-07 Week5-Day7 — Week 5 E2E 集成测试
+
+### 目标
+
+创建 [tests/test_e2e_week5.py](tests/test_e2e_week5.py) —— 验证供应链库存分析从自然语言输入到专业增强报告的完整闭环。
+
+### 测试场景（7 个）
+
+| # | 场景 | 类型 | 验证点 |
+|---|------|------|--------|
+| 1 | 完整流水线（数据驱动） | LLM | sku_inventory.csv → 增强报告，retry=0，含库存关键词 |
+| 2 | 纯参数模式（直接计算） | LLM | 年需求 5000 → EOQ≈447 + 安全库存 |
+| 3 | 文件不存在 | LLM + mock | not_exist.csv → Debugger ABORT → 失败报告 |
+| 4 | Pipeline 直接调用 | 单元 | 10 章增强报告完整性 |
+| 5 | EOQ+SS 直接调用 | 单元 | EOQ≈447.21 + SS>0 |
+| 6 | sku_inventory.csv 完整性 | 单元 | 24 行，异常值位置正确，上升趋势 |
+| 7 | 增强器集成验证 | 单元 | build_enhancer_input → enhance_report |
+
+### 通用检查清单
+
+```python
+def _assert_common(result):
+    assert final_report is not None and len > 100  # 报告非空
+    assert retry_count <= 1                         # 人类干预 ≤1
+    assert len(plan) > 0 and not "错误" in plan    # Plan 有效
+    assert len(code) > 50                           # 代码非空
+
+def _assert_success(result):  # 成功场景额外
+    assert error is None                            # 无错误
+    assert retry_count == 0                         # 零干预
+    assert "✅ 执行成功" in report                   # 成功标记
+```
+
+### 场景 3 实现要点
+
+Mock Debugger 的 `_safe_input` 自动选择 "4"（ABORT），避免测试阻塞：
+
+```python
+with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
+    result = _invoke(query)
+```
+
+### 运行结果
+
+```
+4 passed, 3 deselected (boundary tests, no LLM required)
+369 passed, 零回归（全量单元测试）
+```
+
+LLM 测试（场景 1-3）需 `DEEPSEEK_API_KEY` + `sku_inventory.csv`，通过 `@pytest.mark.skipif` 自动跳过。
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `tests/test_e2e_week5.py` | ~340 | 7 测试（3 LLM + 4 边界） |
+
+### 累计测试数
+
+| 阶段 | 测试数 |
+|------|--------|
+| Week 1-3 基线 | 255 |
+| Week 4 新增 | 114（→ 369） |
+| Week 5 Day 1-2 新增 | 56（→ 425） |
+| Week 5 Day 7 E2E | +7（→ **432**） |
+
+### 回退点
+
+`git commit 当前状态`（Week 5 Day 7 完成基线）
