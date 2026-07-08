@@ -2270,4 +2270,164 @@ tests/test_graph.py:      11 passed in 0.53s（零回归）
 
 `git commit 当前状态`（Week 6 Day 2 完成基线）
 
+---
+
+## 2026-07-08 Week6-Day3 — Benchmark 任务集与指标定义
+
+### 目标
+
+实现 `src/benchmark/` 包，提供预定义的 10 个 benchmark 任务（5 数据分析 + 5 代码生成）、数据模型和指标收集器，为后续自动运行 benchmark 铺路。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 新增 `src/benchmark/` 独立包 | 与 src/agent/（运行时）、src/domain/（领域模板）解耦，benchmark 是评估框架 |
+| 5+5 任务设计 | 数据分析类覆盖 run_analysis/run_quality_check/chart/text_to_sql 全能力；代码生成类覆盖 EOQ/预测/安全库存/补货点/pipeline 全模板 |
+| expected_keywords 自动验证 | 关键词匹配做输出正确性校验，无需人工判断 |
+| 数据文件路径相对 `workspace/data/` | 执行时自动 resolve，平台无关 |
+| category 字段单独注入（不从 BenchmarkResult 存） | 类别是任务属性（BenchmarkTask），不是结果属性；compute() 通过动态注入支持分组 |
+| 指标保留 2 位小数 | round() 统一精度，避免浮点漂移 |
+
+### 实现内容
+
+#### models.py — 数据模型
+
+```python
+@dataclass
+class BenchmarkTask:
+    id: str                                            # "BA-01"
+    category: Literal["data_analysis", "code_generation"]
+    query: str                                         # 自然语言需求
+    expected_keywords: list[str]                       # 3-5 个验证关键词
+    timeout: int = 60                                  # 超时秒数
+    data_files: list[str] | None = None               # 依赖数据文件
+
+@dataclass
+class BenchmarkResult:
+    task_id: str
+    success: bool = False        # all expected_keywords in output?
+    completed: bool = False      # 正常完成（无 timeout / LLM 失败）?
+    retry_count: int = 0
+    elapsed_seconds: float = 0.0
+    error: str | None = None
+    output_keywords_found: list[str] = field(default_factory=list)
+    report_path: str | None = None
+```
+
+#### tasks.py — 10 个预定义任务
+
+**数据分析类（5 个）：**
+
+| ID | 任务 | 数据文件 | 预期关键词 |
+|----|------|---------|-----------|
+| BA-01 | 统计 sales_volume 均值/中位数/标准差 | sales.csv | sales, 均值, 标准差, 销量 |
+| BA-02 | 检查数据质量（缺失值/异常值/评分） | sales.csv | 缺失值, 异常值, 评分, 数据质量 |
+| BA-03 | 各区域销量柱状图 | sales.csv | 图表, bar, bar_chart, html |
+| BA-04 | run_text_to_sql 查询区域平均销量 | sales.csv | SELECT, AVG, region, 区域 |
+| BA-05 | 一键分析 inventory.csv | inventory.csv | 分析, inventory, 报告 |
+
+**代码生成类（5 个）：**
+
+| ID | 任务 | 数据文件 | 预期关键词 |
+|----|------|---------|-----------|
+| CG-01 | 计算 EOQ（年需求 1000/订货 50/持有 2） | 无 | EOQ, 223, inventory_eoq |
+| CG-02 | demand_forecast 预测 3 期 | 无 | 预测, MAPE, forecasts |
+| CG-03 | safety_stock 计算（100/20/2/95%） | 无 | 安全库存, Z, 1.64 |
+| CG-04 | reorder_point 计算（100/2/50） | 无 | 补货点, ROP, reorder_point, 250 |
+| CG-05 | inventory_pipeline 分析 sku_inventory.csv | sku_inventory.csv | pipeline, 报告, 图表, EOQ |
+
+#### metrics.py — MetricsCollector
+
+```python
+class MetricsCollector:
+    record(result: BenchmarkResult)       # 追加结果
+    compute() → dict                      # 返回指标字典
+```
+
+`compute()` 返回：
+- `total`: int — 总任务数
+- `completion_rate`: float — completed / total（2 位小数）
+- `success_rate`: float — success / total（2 位小数）
+- `avg_retry_count`: float（2 位小数）
+- `avg_elapsed_seconds`: float（2 位小数）
+- `category_breakdown`: dict — 按 category 分组统计（count, success_rate, completion_rate, avg_retry, avg_elapsed）
+- `task_details`: list[dict] — 每个任务的详细信息
+
+空结果时所有 rate/avg 返回 0.0（而非 NaN 或 ZeroDivisionError）。
+
+### 测试覆盖
+
+`tests/test_benchmark_models.py` — 17 个测试场景：
+
+#### TestBenchmarkTasks（8 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | get_default_tasks() 返回 10 个任务 | ✅ |
+| 2 | 5 data_analysis + 5 code_generation | ✅ |
+| 3 | 所有任务 ID 唯一 | ✅ |
+| 4 | BA- 前缀 = 数据分析，CG- 前缀 = 代码生成 | ✅ |
+| 5 | 每个任务 expected_keywords 数量 ∈ [3, 5] | ✅ |
+| 6 | 所有 timeout > 0 | ✅ |
+| 7 | 数据分析任务都有 data_files | ✅ |
+| 8 | 代码生成任务 query 含数字或文件名（参数明确） | ✅ |
+
+#### TestBenchmarkModels（4 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 9 | BenchmarkTask 所有字段正确 | ✅ |
+| 10 | 默认值（timeout=60, data_files=None） | ✅ |
+| 11 | BenchmarkResult 所有字段正确 | ✅ |
+| 12 | 默认值（success=False, completed=False） | ✅ |
+
+#### TestMetricsCollector（5 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 13 | 空收集器 → 全部指标为 0 | ✅ |
+| 14 | 单个成功结果 → rate=1.0 | ✅ |
+| 15 | 2 成功 + 1 失败 → 混合指标计算 | ✅ |
+| 16 | 所有指标保留 2 位小数 | ✅ |
+| 17 | category_breakdown 包含所有类别 | ✅ |
+
+### 运行结果
+
+```
+tests/test_benchmark_models.py: 17 passed in 0.07s
+全量回归 (excl Docker): 436 passed, 0 failed, 0 regressions
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/benchmark/__init__.py` | ~15 | 导出 BenchmarkTask, BenchmarkResult, MetricsCollector |
+| `src/benchmark/models.py` | ~60 | BenchmarkTask + BenchmarkResult dataclass |
+| `src/benchmark/tasks.py` | ~90 | get_default_tasks() 10 个预定义任务 |
+| `src/benchmark/metrics.py` | ~110 | MetricsCollector 指标收集与计算 |
+| `tests/test_benchmark_models.py` | ~290 | 17 个测试（8 任务 + 4 模型 + 5 指标） |
+
+### 累计测试数
+
+| 阶段 | 测试数 |
+|------|--------|
+| Week 1-5 基线 | 390 |
+| Week 6 Day 1 | +15（→ 405） |
+| Week 6 Day 2 | +14（→ 419） |
+| Week 6 Day 3 | +17 |
+| Week 6 累计 | **436** |
+
+### 踩坑记录
+
+- **BenchmarkResult 不应存储 category**：category 是任务属性不是结果属性。compute() 中通过 `getattr(r, "category", "unknown")` 动态读取——调用方需在执行时注入。直接存 category 字段会让数据模型承担不必要的上下文。
+- **空结果防御**：`compute()` 空列表时返回 0.0 而非 ZeroDivisionError，避免调用方额外 try/except。
+- **测试中 validate 2 decimal places**：用 `f"{val:.10f}"` + 截零字符数来验证 `round(x, 2)` 结果确实 ≤ 2 位小数，避免 `assert val == round(val, 2)` 对 NaN 误判。
+
+### 回退点
+
+`git commit 当前状态`（Week 6 Day 3 完成基线）
+
+
 
