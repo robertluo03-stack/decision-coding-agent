@@ -2604,6 +2604,176 @@ tests/test_benchmark_runner.py: 24 passed in 2.39s
 
 `git commit 当前状态`（Week 6 Day 4 完成基线）
 
+---
+
+## 2026-07-08 Week6-Day5 — Benchmark 报告生成与 Rich 集成
+
+### 目标
+
+实现 ReportGenerator（MD + HTML 报告）、BenchmarkRunner Rich UI 集成、CLI `report` 子命令，完成 Week 6 所有验收项。
+
+### 设计决策
+
+| 决策 | 原因 |
+|------|------|
+| 报告独立于执行器 | `ReportGenerator` 接受 `MetricsCollector`，可从 Runner 或 JSONL 构建 |
+| 内联 CSS，零外部框架 | HTML 报告自包含，`<style>` 内嵌，不依赖 Tailwind/Bootstrap |
+| 成功率进度条 | `<div>` + `width: X%` + 颜色梯度（绿≥80 / 橙≥50 / 红<50） |
+| `run --rich` 通过 `_init_ui()` | Benchmark 10 个动态任务，`ProgressPanel` add_task 按需添加 |
+| `report <jsonl>` 子命令 | 从已有 JSONL 重建 `MetricsCollector` → 生成报告，无需重新执行 |
+| `metrics.compute()` 增加 `completed`/`succeeded` | 报告生成需要原始计数（非仅百分比），如 "完成率: 80% (8/10)" |
+
+### 实现内容
+
+#### reporter.py — ReportGenerator
+
+```python
+class ReportGenerator:
+    generate_md(collector, output_path) → str   # Markdown 报告
+    generate_html(collector, output_path) → str  # HTML 报告
+```
+
+**Markdown 结构**（6 个章节）：
+1. 总览指标（时间、总数、完成率、成功率、平均重试、平均耗时）
+2. 分类统计表格（类别 / 任务数 / 完成率 / 成功率 / 平均重试）
+3. 任务明细表格（ID / 类别 / 状态 / 耗时 / 重试 / 验证）
+4. 失败任务错误摘要（错误信息 ≤ 200 字符）
+
+**HTML 额外特性**：
+- 5 个指标卡片（彩色数值 + 灰色标签）
+- 成功率进度条（绿色 ≥ 80%，橙色 ≥ 50%，红色 < 50%）
+- 状态徽章（`.badge.success` / `.badge.fail` / `.badge.timeout`）
+- 响应式布局（`flex-wrap` 卡片）
+
+#### runner.py 变更 — `run_all(use_ui=False)`
+
+```python
+def run_all(self, use_ui: bool = False) -> MetricsCollector:
+    ...
+    if use_ui:
+        ui_manager = self._init_ui()   # 创建 UIManager，动态 add_task
+    try:
+        for task in self.tasks:
+            ...
+            if use_ui:
+                ui_manager.log(...)     # 结果摘要写入 LogPanel
+            else:
+                print(...)              # 纯文本
+    finally:
+        if ui_manager:
+            ui_manager.stop()
+```
+
+新增 `_init_ui()` 方法：
+- 创建 `UIManager` → `start()` → 为每个 task 动态 `update_node(task.id, "等待")`
+- TTY 时打印 "🎨 Rich 终端 UI 已启动"
+- 异常时返回 `None`（降级）
+
+新增 `jsonl_path` 属性（供 `__main__.py` 报告生成用）。
+
+#### __main__.py 变更 — `run` + `report` 子命令
+
+```bash
+python -m benchmark run              # 执行 → MD + HTML
+python -m benchmark run --rich       # 带 Rich UI
+python -m benchmark report <jsonl>   # 仅生成报告
+```
+
+`run` 命令流程：加载任务 → 创建 Runner → `run_all(use_rich)` → `_generate_reports()`.
+
+`report` 命令流程：读取 JSONL → 逐行解析为 `BenchmarkResult` → 构建 `MetricsCollector` → `_generate_reports()`.
+
+`_generate_reports()`：基于 JSONL 文件名生成 `{base}_report.md` + `{base}_report.html`.
+
+#### metrics.py 变更
+
+`compute()` 返回新增 `"completed"` 和 `"succeeded"` 两个整数字段，供 `generate_md` 报告中的 `(8/10)` 格式使用。
+
+### 测试覆盖
+
+`tests/test_benchmark_reporter.py` — 13 个测试场景：
+
+#### TestMarkdownReport（5 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 1 | 标题 + 4 个章节完整性 | ✅ |
+| 2 | 完成率/成功率数字正确（10 任务：80%/90%） | ✅ |
+| 3 | 任务明细含每个任务 ID + 成功/失败状态 | ✅ |
+| 4 | 空收集器不报错 | ✅ |
+| 5 | 自动创建父目录 | ✅ |
+
+#### TestHTMLReport（5 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 6 | HTML 完整结构（DOCTYPE/html/head/body/table） | ✅ |
+| 7 | 成功率进度条（progress-bar + progress-fill + width） | ✅ |
+| 8 | 指标卡片（card + value 类） | ✅ |
+| 9 | 状态徽章（badge success/fail） | ✅ |
+| 10 | 错误摘要包含失败任务 ID | ✅ |
+
+#### TestJSONLToReport（1 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 11 | JSOL → MD + HTML 端到端（文件存在 + 非空 + KeyError 被记录） | ✅ |
+
+#### TestRunnerWithUIMock（2 个）
+
+| # | 场景 | 状态 |
+|---|------|------|
+| 12 | `use_ui=False` 默认 → 不创建 UI | ✅ |
+| 13 | `use_ui=True` → UI mock 方法被调用（stop + log） | ✅ |
+
+### 运行结果
+
+```
+tests/test_benchmark_reporter.py: 13 passed in 0.37s
+全量回归 (excl Docker): 472 passed, 1 failed
+  └── 1 failed = test_e2e_week3.py::test_task_c_text_to_sql_subprocess
+      → 已知限制：Debugger _safe_input() 与 pytest stdin 捕获冲突
+```
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/benchmark/reporter.py` | ~210 | ReportGenerator（MD + HTML 报告生成） |
+| `tests/test_benchmark_reporter.py` | ~290 | 13 个测试（MD 5 + HTML 5 + JSONL 1 + UI 2） |
+
+### 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/benchmark/runner.py` | `run_all(use_ui=True)` + `_init_ui()` + `jsonl_path` 属性 |
+| `src/benchmark/__main__.py` | `run` + `report` 子命令 + `_generate_reports()` 辅助 |
+| `src/benchmark/metrics.py` | `compute()` 返回新增 `"completed"`、`"succeeded"` 整数字段 |
+| `DEV_LOG.md` | Day 5 开发记录 |
+
+### 累计测试数
+
+| 阶段 | 测试数 |
+|------|--------|
+| Week 1-5 基线 | 390 |
+| Week 6 Day 1 | +15（→ 405） |
+| Week 6 Day 2 | +14（→ 419） |
+| Week 6 Day 3 | +17（→ 436） |
+| Week 6 Day 4 | +24（→ 460） |
+| Week 6 Day 5 | +13 |
+| **Week 6 累计** | **473** |
+
+### 踩坑记录
+
+- **MD 表格的 `|` 转义**：错误信息如 `KeyError: 'column'` 不含管道符，但 `SyntaxError` 可能含 `|` 前缀。`_escape_pipe()` 将 `|` 转为 `\|` 避免破坏表格结构。
+- **`metrics.compute()` 缺少原始计数**：报告需 `(8/10)` 格式，仅百分比不够。新增 `"completed"` / `"succeeded"` 整数字段。
+- **`_init_ui` mock 路径**：`UIManager` 在 `_init_ui()` 内部局部 import，patch 路径不是模块级 `src.benchmark.runner.UIManager`。解决方案：`patch.object(runner, "_init_ui")` 替换整个方法。
+
+### 回退点
+
+`git commit 当前状态`（Week 6 完成基线）
+
+
 
 
 

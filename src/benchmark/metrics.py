@@ -37,6 +37,8 @@ class MetricsCollector:
         Returns:
             指标字典包含：
             - total: 总任务数
+            - completed: 已完成数
+            - succeeded: 成功数
             - completion_rate: 完成率（completed / total），保留 2 位小数
             - success_rate: 成功率（success / total），保留 2 位小数
             - avg_retry_count: 平均重试次数
@@ -48,6 +50,8 @@ class MetricsCollector:
         if total == 0:
             return {
                 "total": 0,
+                "completed": 0,
+                "succeeded": 0,
                 "completion_rate": 0.0,
                 "success_rate": 0.0,
                 "avg_retry_count": 0.0,
@@ -102,6 +106,8 @@ class MetricsCollector:
 
         return {
             "total": total,
+            "completed": completed,
+            "succeeded": succeeded,
             "completion_rate": round(completed / total, 2),
             "success_rate": round(succeeded / total, 2),
             "avg_retry_count": round(sum(retries) / total, 2),

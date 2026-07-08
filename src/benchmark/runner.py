@@ -1,6 +1,7 @@
 """Benchmark 执行引擎。
 
 BenchmarkRunner — 遍历任务集，逐个执行 graph.run()，收集结果写入 JSONL。
+支持 use_ui=True 时通过 Rich 终端 UI 实时展示进度。
 """
 
 from __future__ import annotations
@@ -31,7 +32,9 @@ class BenchmarkRunner:
         tasks = get_default_tasks()
         runner = BenchmarkRunner(tasks, workspace_path="workspace/")
         collector = runner.run_all()
-        metrics = collector.compute()
+
+        # 带 Rich UI
+        collector = runner.run_all(use_ui=True)
     """
 
     def __init__(
@@ -134,13 +137,16 @@ class BenchmarkRunner:
 
         return result_state, elapsed
 
-    def run_all(self) -> MetricsCollector:
+    def run_all(self, use_ui: bool = False) -> MetricsCollector:
         """执行全部任务，逐任务收集结果。
 
         每个任务执行后立即：
         1. 验证结果（validate_task_result）
         2. 写入 JSONL（断点续跑友好）
-        3. 打印进度
+        3. 打印进度（或通过 Rich UI 展示）
+
+        Args:
+            use_ui: 是否启用 Rich 终端 UI（默认 False）。
 
         Returns:
             MetricsCollector（包含全部 BenchmarkResult）。
@@ -148,53 +154,101 @@ class BenchmarkRunner:
         n = len(self.tasks)
         collector = MetricsCollector()
 
+        # ── Rich UI 初始化 ──
+        ui_manager = None
+        if use_ui:
+            ui_manager = self._init_ui()
+
         # 清除 JSONL 文件（覆盖旧内容）
         if self._jsonl_path.exists():
             self._jsonl_path.unlink()
 
-        for i, task in enumerate(self.tasks):
-            print(f"\n{'─' * 50}")
-            print(f"[{i + 1}/{n}] {task.id} — {task.category}")
-            print(f"{'─' * 50}")
+        try:
+            for i, task in enumerate(self.tasks):
+                if not use_ui:
+                    print(f"\n{'─' * 50}")
+                    print(f"[{i + 1}/{n}] {task.id} — {task.category}")
+                    print(f"{'─' * 50}")
 
-            # ── 任务前环境清理 ──
-            self._cleanup_workspace()
+                # ── 任务前环境清理 ──
+                self._cleanup_workspace()
 
-            # ── 执行 ──
-            print(f"  执行中...")
-            state, elapsed = self.run_single(task)
+                # ── 执行 ──
+                if use_ui and ui_manager is not None:
+                    ui_manager.log(f"[{task.id}] 开始执行...", level="info")
+                else:
+                    print(f"  执行中...")
 
-            # ── 验证 ──
-            result = validate_task_result(
-                task, state, round(elapsed, 2), self.workspace_path
-            )
-            # 注入 category（供 MetricsCollector 分组）
-            result.category = task.category  # type: ignore[attr-defined]
-            collector.record(result)
+                state, elapsed = self.run_single(task)
 
-            # ── 写入 JSONL ──
-            self._append_jsonl(result)
+                # ── 验证 ──
+                result = validate_task_result(
+                    task, state, round(elapsed, 2), self.workspace_path
+                )
+                # 注入 category（供 MetricsCollector 分组）
+                result.category = task.category  # type: ignore[attr-defined]
+                collector.record(result)
 
-            # ── 打印结果 ──
-            verdict = "✅ 通过" if result.success else ("❌ 失败" if result.completed else "⏱ 超时")
-            print(f"  {verdict} | 耗时 {result.elapsed_seconds:.1f}s | "
-                  f"重试 {result.retry_count} | "
-                  f"关键词命中 {result.output_keywords_found}")
+                # ── 写入 JSONL ──
+                self._append_jsonl(result)
+
+                # ── 打印结果 ──
+                if use_ui and ui_manager is not None:
+                    status_icon = "✅" if result.success else ("❌" if result.completed else "⏱")
+                    ui_manager.log(
+                        f"{status_icon} [{task.id}] {result.elapsed_seconds:.1f}s | "
+                        f"重试 {result.retry_count} | "
+                        f"命中 {result.output_keywords_found}",
+                        level="info" if result.success else "error",
+                    )
+                else:
+                    verdict = "✅ 通过" if result.success else ("❌ 失败" if result.completed else "⏱ 超时")
+                    print(f"  {verdict} | 耗时 {result.elapsed_seconds:.1f}s | "
+                          f"重试 {result.retry_count} | "
+                          f"关键词命中 {result.output_keywords_found}")
+
+        finally:
+            if ui_manager is not None:
+                ui_manager.stop()
 
         # ── 最终汇总 ──
         metrics = collector.compute()
-        print(f"\n{'═' * 50}")
-        print(f"Benchmark 完成：{metrics['total']} 个任务")
-        print(f"  完成率:  {metrics['completion_rate']}")
-        print(f"  成功率:  {metrics['success_rate']}")
-        print(f"  平均重试: {metrics['avg_retry_count']}")
-        print(f"  平均耗时: {metrics['avg_elapsed_seconds']}s")
-        print(f"  结果文件: {self._jsonl_path}")
-        print(f"{'═' * 50}")
+        if not use_ui:
+            print(f"\n{'═' * 50}")
+            print(f"Benchmark 完成：{metrics['total']} 个任务")
+            print(f"  完成率:  {metrics['completion_rate']}")
+            print(f"  成功率:  {metrics['success_rate']}")
+            print(f"  平均重试: {metrics['avg_retry_count']}")
+            print(f"  平均耗时: {metrics['avg_elapsed_seconds']}s")
+            print(f"  结果文件: {self._jsonl_path}")
+            print(f"{'═' * 50}")
 
         return collector
 
     # ── 内部辅助 ──────────────────────────────────────────
+
+    @property
+    def jsonl_path(self) -> str:
+        """当前 JSONL 输出路径（供 __main__.py 报告生成使用）。"""
+        return str(self._jsonl_path)
+
+    def _init_ui(self) -> object | None:
+        """初始化 Rich 终端 UI。
+
+        Returns:
+            UIManager 实例，或 None（降级时）。
+        """
+        try:
+            from src.agent.ui.manager import UIManager
+            ui = UIManager()
+            ui.start()
+            if ui._is_tty:
+                print("🎨 Rich 终端 UI 已启动")
+            for task in self.tasks:
+                ui.update_node(task.id, "等待", 0.0, retry=0)
+            return ui
+        except Exception:
+            return None
 
     def _cleanup_workspace(self) -> None:
         """任务前清理临时文件（避免上一任务污染）。
