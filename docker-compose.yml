@@ -1,0 +1,117 @@
+# docker-compose.yml — DecisionCoder App + Sandbox 编排
+#
+# 架构：
+#   app       — 主应用（LangGraph Agent），通过 SANDBOX_URL 连接 sandbox 执行代码
+#   sandbox   — 隔离 Python 执行容器，仅 HTTP :5000 对内暴露
+#
+# 网络：
+#   sandbox-net  — 内部网络（internal: true），sandbox 无互联网出口，仅 app ↔ sandbox 通信
+#
+# 共享卷：
+#   ./workspace  → /app/workspace  (app: rw, sandbox: ro)
+#   ./reports    → /app/reports     (app: rw, sandbox: rw)
+#
+# 使用方式：
+#   docker compose up --build      # 构建并启动
+#   docker compose down            # 停止并清理
+
+# ---------------------------------------------------------------------------
+# 网络
+# ---------------------------------------------------------------------------
+
+networks:
+  sandbox-net:
+    driver: bridge
+    internal: true  # 禁止容器通过此网络访问互联网，仅允许网内容器互通
+
+# ---------------------------------------------------------------------------
+# 卷
+# ---------------------------------------------------------------------------
+
+volumes:
+  workspace_data:  # 可选的命名卷，用于持久化 workspace（当前使用 bind mount）
+  reports_data:    # 可选的命名卷，用于持久化 reports（当前使用 bind mount）
+
+# ---------------------------------------------------------------------------
+# 服务
+# ---------------------------------------------------------------------------
+
+services:
+
+  # =========================================================================
+  # sandbox — Python 代码执行沙箱
+  # =========================================================================
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: decision-coder-sandbox:latest
+    container_name: dc-sandbox
+    hostname: sandbox
+
+    # 资源限制
+    mem_limit: 512m
+    cpus: 1.0
+
+    # 仅加入内部网络（无互联网出口）
+    networks:
+      - sandbox-net
+
+    # 不暴露端口到宿主机，仅 app 服务通过 docker 网络访问
+
+    # 共享卷
+    volumes:
+      - ./workspace:/app/workspace:ro   # 只读 — sandbox 只能读取输入数据
+      - ./reports:/app/reports          # 可写 — sandbox 可在 /app/reports 输出图表等
+
+    # 重启策略
+    restart: unless-stopped
+
+    # 健康检查（Dockerfile 内置 HEALTHCHECK，此处声明 depends_on 使用）
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  # =========================================================================
+  # app — DecisionCoder 主应用
+  # =========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: decision-coder:latest
+    container_name: dc-app
+    hostname: app
+
+    depends_on:
+      sandbox:
+        condition: service_healthy  # 等 sandbox 健康检查通过后才启动
+
+    # 加入内部网络以访问 sandbox
+    networks:
+      - sandbox-net
+
+    # 环境变量
+    environment:
+      - SANDBOX_URL=http://sandbox:5000         # compose 路径执行入口
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}   # 从宿主机 .env 或 shell 传入
+      - WORKSPACE_PATH=/app/workspace            # 统一工作区路径
+      - REPORTS_PATH=/app/reports                # 报告输出路径
+      - USE_COMPOSE=${USE_COMPOSE:-true}          # 启用 compose 执行路径
+
+    # 共享卷
+    volumes:
+      - ./workspace:/app/workspace
+      - ./reports:/app/reports
+
+    # 可选端口 — 若后续加 Web UI
+    # ports:
+    #   - "8080:8080"
+
+    # 启动命令
+    stdin_open: true  # 交互式 CLI
+    tty: true
+    restart: unless-stopped

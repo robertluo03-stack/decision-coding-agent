@@ -1,0 +1,49 @@
+# Dockerfile.sandbox — 轻量级 Python 执行沙箱
+#
+# 与主 Dockerfile 的区别：
+#   - 不安装 langchain / deepseek / rich / loguru / langgraph 等 Agent 层依赖
+#   - 仅安装执行生成代码所需的 pandas / scipy / plotly / duckdb / openpyxl
+#   - 不复制项目源码，仅包含 sandbox_server.py + security_checker.py
+#   - 暴露 HTTP :5000 接口（Flask），不暴露 LLM API Key
+#
+# 构建方式：
+#   docker build -f Dockerfile.sandbox -t decision-coder-sandbox:latest .
+
+FROM python:3.11-slim
+
+# ---- 系统依赖 ----
+# Flask 用于 HTTP 接口（轻量级，仅容器内通信用）
+RUN pip install --no-cache-dir \
+    flask>=3.0 \
+    pandas \
+    scipy \
+    plotly>=5.0 \
+    duckdb>=0.10 \
+    openpyxl>=3.0 \
+    && pip cache purge
+
+# ---- 创建非 root 用户 ----
+RUN useradd --create-home --shell /bin/bash sandbox
+
+# ---- 复制仅必需的文件 ----
+# security_checker.py — AST 安全检查（无 Agent 依赖，仅用 ast + typing）
+COPY src/agent/sandbox/security_checker.py /app/security_checker.py
+# sandbox_server.py — Flask HTTP 执行服务器
+COPY src/agent/sandbox/sandbox_server.py /app/sandbox_server.py
+
+# ---- 工作目录 ----
+WORKDIR /app
+
+# ---- 安全配置 ----
+# 切换到非 root 用户
+USER sandbox
+
+# ---- 暴露端口（仅内部 docker 网络，不可外部访问） ----
+EXPOSE 5000
+
+# ---- 健康检查 ----
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
+
+# ---- 启动 ----
+CMD ["python", "sandbox_server.py"]

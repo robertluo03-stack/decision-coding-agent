@@ -7,6 +7,7 @@
   4. 捕获 stdout / stderr
 
 Week 2：支持通过 MCP Client 调用 python_exec Tool（USE_MCP=true）。
+Week 7：支持通过 Docker Compose Sandbox HTTP 执行（SANDBOX_URL / USE_COMPOSE）。
 """
 
 import hashlib
@@ -227,6 +228,72 @@ async def _execute_via_mcp(
 
 
 # ---------------------------------------------------------------------------
+# Docker Compose Sandbox 执行路径（Week 7）
+# ---------------------------------------------------------------------------
+
+
+def _should_use_compose() -> bool:
+    """检查是否应启用 Docker Compose Sandbox 执行路径。
+
+    优先级最高：SANDBOX_URL > USE_COMPOSE=true > USE_MCP > USE_DOCKER > subprocess。
+
+    Returns:
+        True 如果 SANDBOX_URL 环境变量存在，或 USE_COMPOSE=true
+    """
+    # 检查 SANDBOX_URL（docker-compose 自动注入）
+    sandbox_url = os.environ.get("SANDBOX_URL", "").strip()
+    if sandbox_url:
+        return True
+    # 检查 USE_COMPOSE 标志
+    if os.environ.get("USE_COMPOSE", "").strip().lower() in ("true", "1", "yes"):
+        return True
+    return False
+
+
+def _execute_via_compose(
+    code: str,
+    workspace: Path,
+) -> dict:
+    """通过 Docker Compose Sandbox HTTP 服务执行代码。
+
+    工作流程：
+      1. 从 SANDBOX_URL 环境变量读取 sandbox 地址
+      2. 创建 SandboxClient 实例
+      3. 调用 execute() 远程执行代码
+      4. 将 SandboxClient 返回格式映射为 executor AgentState 格式
+
+    Args:
+        code: Python 源代码
+        workspace: 工作区根目录（compose 模式下映射到 sandbox 内 /app/workspace）
+
+    Returns:
+        {"execution_result": str|None, "error": str|None, "file_path": str|None}
+    """
+    from src.agent.sandbox.sandbox_client import SandboxClient, SandboxUnavailableError
+
+    sandbox_url = os.environ.get("SANDBOX_URL", "http://sandbox:5000").strip()
+    logger.info("[Executor] Compose 路径 | sandbox_url={} | code_len={}", sandbox_url, len(code))
+
+    client = SandboxClient(base_url=sandbox_url)
+    try:
+        result = client.execute(code, timeout=EXECUTION_TIMEOUT)
+        logger.info(
+            "[Executor] Compose 路径退出 | has_error={}",
+            result["error"] is not None,
+        )
+        return result
+    except SandboxUnavailableError as exc:
+        logger.error("[Executor] Compose sandbox 不可用 | error={}", exc)
+        return {
+            "execution_result": None,
+            "error": f"Sandbox unavailable: {exc}",
+            "file_path": None,
+        }
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
@@ -234,12 +301,13 @@ async def _execute_via_mcp(
 def executor_node(state: AgentState) -> dict:
     """在沙箱中执行 generated_code。
 
-    执行流程：
+    执行流程（按优先级）：
         1. 空代码检查
         2. 危险代码检查
         3. 语法预检（compile）
-        4a. [USE_MCP=true] 通过 MCP Client 调用 python_exec Tool
-        4b. [默认] 写入临时文件 → subprocess.run 执行（向后兼容）
+        4a. [SANDBOX_URL / USE_COMPOSE] 通过 SandboxClient HTTP 远程执行（最高优先级）
+        4b. [USE_MCP=true] 通过 MCP Client 调用 python_exec Tool
+        4c. [默认] 写入临时文件 → subprocess.run 执行（向后兼容）
 
     输入:
         state["generated_code"]   — str，Python 代码
@@ -301,7 +369,23 @@ def executor_node(state: AgentState) -> dict:
             "file_path": None,
         }
 
-    # ---- 4a. MCP 路径（USE_MCP=true） ----
+    # ---- 4a. Docker Compose Sandbox 路径（最高优先级） ----
+    if _should_use_compose():
+        logger.info("[Executor] 使用 Compose Sandbox 路径执行代码 | code_len={}", len(code))
+        try:
+            result = _execute_via_compose(code, workspace)
+            logger.info(
+                "[Executor] Compose 路径退出 | has_error={}",
+                result["error"] is not None,
+            )
+            return result
+        except Exception as exc:
+            logger.warning(
+                "[Executor] Compose 路径失败（{}），回退到 subprocess 路径",
+                exc,
+            )
+
+    # ---- 4b. MCP 路径（USE_MCP=true） ----
     if _should_use_mcp():
         logger.info("[Executor] 使用 MCP 路径执行代码 | code_len={}", len(code))
         try:
@@ -344,7 +428,7 @@ def executor_node(state: AgentState) -> dict:
                 exc,
             )
 
-    # ---- 4b. subprocess 路径（默认 / fallback） ----
+    # ---- 4c. subprocess 路径（默认 / fallback） ----
     logger.info("[Executor] 使用 subprocess 路径执行代码")
 
     tmp_path = _write_temp_file(code, workspace)
