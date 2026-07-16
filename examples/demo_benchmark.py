@@ -3,12 +3,16 @@
 模拟 10 个任务（7 成功 3 失败，含重试），
 调用 ReportGenerator 生成 MD + HTML 报告。
 
+Requires API Key: ❌ 不需要
+
 用法:
     python examples/demo_benchmark.py
+    python examples/demo_benchmark.py --output-dir examples/output/
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -21,13 +25,21 @@ if _project_root not in sys.path:
 
 def main() -> None:
     """Benchmark Demo 主入口。"""
+    parser = argparse.ArgumentParser(description="Benchmark Demo — mock 数据 + 报告生成")
+    parser.add_argument("--output-dir", default="examples/output/", help="输出目录（默认 examples/output/）")
+    args = parser.parse_args()
+
     from src.benchmark.models import BenchmarkResult
     from src.benchmark.metrics import MetricsCollector
     from src.benchmark.reporter import ReportGenerator
 
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     print("📊 Benchmark 报告 Demo")
     print("═" * 50)
     print("  模式: mock 数据（不调用 LLM）")
+    print(f"  输出目录: {output_dir.resolve()}")
     print()
 
     # ── 构造 10 个 mock 结果 ──
@@ -100,8 +112,6 @@ def main() -> None:
 
     # ── 生成报告 ──
     gen = ReportGenerator()
-    output_dir = Path("results")
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     md_path = output_dir / "demo_benchmark_report.md"
     html_path = output_dir / "demo_benchmark_report.html"
@@ -112,8 +122,8 @@ def main() -> None:
     print(f"📝 Markdown 报告: {md_path.resolve()}")
     print(f"🌐 HTML 报告:     {html_path.resolve()}")
     print()
-    print(f"📏 MD 文件大小:  {md_path.stat().st_size} bytes")
-    print(f"📏 HTML 文件大小: {html_path.stat().st_size} bytes")
+    print(f"📏 MD 文件大小:  {md_path.stat().st_size:,} bytes")
+    print(f"📏 HTML 文件大小: {html_path.stat().st_size:,} bytes")
     print()
     print("═" * 50)
     print("  Benchmark Demo 完成 ✅")

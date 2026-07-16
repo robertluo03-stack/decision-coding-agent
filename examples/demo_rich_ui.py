@@ -3,13 +3,17 @@
 模拟 5 个节点依次执行 + Debugger 调试面板触发。
 运行约 10 秒后自动结束。
 
+Requires API Key: ❌ 不需要
+
 用法:
-    python examples/demo_rich_ui.py       # TTY 模式（Rich Live UI）
-    python examples/demo_rich_ui.py -t    # 强制 TTY 模式
+    python examples/demo_rich_ui.py          # TTY 模式（Rich Live UI）
+    python examples/demo_rich_ui.py -t       # 强制 TTY 模式
+    python examples/demo_rich_ui.py --output-dir examples/output/  # 指定输出目录（不保存截图，仅日志输出）
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
@@ -22,7 +26,19 @@ if _project_root not in sys.path:
 
 def main() -> None:
     """Rich UI Demo 主入口。"""
-    force_terminal = "-t" in sys.argv or "--tty" in sys.argv
+    parser = argparse.ArgumentParser(description="Rich 终端 UI Demo")
+    parser.add_argument("-t", "--tty", action="store_true", help="强制 TTY 模式")
+    parser.add_argument("--output-dir", default=None, help="输出目录（默认不保存截图，仅终端展示）")
+    args = parser.parse_args()
+
+    force_terminal = args.tty
+    output_dir = args.output_dir
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"📁 输出目录: {output_dir}")
+        print("💡 提示: --output-dir 仅创建目录，本 Demo 不生成文件，仅终端展示 Rich UI 效果。")
+        print()
 
     from src.agent.ui.manager import UIManager
 
