@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_docker_mode_graph.py \
+            --ignore=tests/test_docker_runner_security.py \
+            --ignore=tests/test_e2e_week3.py \
+            --ignore=tests/test_e2e_week4.py \
+            --ignore=tests/test_e2e_week5.py \
+            -v
+        env:
+          CI: true
+          # DEEPSEEK_API_KEY 不设置，E2E 测试自动跳过
