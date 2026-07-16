@@ -118,9 +118,17 @@ decision-coder/
 │   │   └── templates/              # 7 个供应链/数据分析模板
 │   └── benchmark/                  # Benchmark 评测框架
 ├── tests/                          # 472 个测试用例（31 个文件）
+├── docs/                           # 架构文档
+│   ├── architecture.md             # 架构设计（4 层模型 + 状态机 + 路由规则）
+│   ├── sequence.md                 # 时序图（成功路径 + 调试循环）
+│   ├── state-machine.md            # 状态机形式化定义
+│   ├── security.md                 # 5 道安全防线详解
+│   └── benchmark.md                # Benchmark 评测框架详解
 ├── workspace/                      # 运行时工作区
 └── reports/                        # 输出报告
 ```
+
+> 详细架构文档见 [docs/architecture.md](docs/architecture.md)。
 
 ## 依赖
 
