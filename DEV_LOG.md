@@ -2978,8 +2978,252 @@ tests/test_benchmark_reporter.py: 13 passed in 0.37s
 
 `git commit 当前状态`（Week 6 完成基线）
 
+---
 
+## 2026-07-16 Week7-Day1 — Docker Compose 编排
 
+### 目标
 
+实现 Docker Compose 双服务编排 + HTTP Sandbox 执行路径，构建 app（LangGraph Agent）↔ sandbox（Python 执行容器）隔离架构。
 
+### 设计决策
 
+| 决策 | 原因 |
+|------|------|
+| sandbox 服务网络隔离（internal bridge） | 沙箱容器无互联网出口，防止代码注入后外连 |
+| Flask HTTP 接口而非 gRPC/tcp | 最小化依赖，容器内仅需 flask+pandas+scipy+plotly+duckdb+openpyxl |
+| POST /execute + GET /health 两个端点 | 最小接口面，减少攻击面 |
+| security_checker.py 复用（COPY 到 sandbox） | 不重复实现 AST 安全检查，通过文件复制而非 pip install |
+| Executor 执行优先级：compose > MCP > Docker > subprocess | SANDBOX_URL 环境变量或 USE_COMPOSE=true 时优先 compose 路径 |
+| sandbox 只读 workspace 挂载 | 防止生成代码修改输入数据 |
+
+### 新增文件清单
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `Dockerfile.sandbox` | ~40 | 轻量 sandbox 镜像（flask + 数据科学包，无 Agent 层依赖） |
+| `docker-compose.yml` | ~100 | 双服务编排（app + sandbox）+ 内部网络 + 资源限制 |
+| `src/agent/sandbox/sandbox_server.py` | ~150 | Flask HTTP 执行服务器（POST /execute + 安全检查 + compile 预检） |
+| `src/agent/sandbox/sandbox_client.py` | ~180 | HTTP 客户端（SandboxClient + SandboxUnavailableError） |
+| `tests/test_docker_compose.py` | ~350 | 11 个测试（mock client + fallback + executor integration + priority） |
+
+### 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/agent/nodes/executor.py` | 新增 `_should_use_compose()` / `_execute_via_compose()` + compose 优先分支（4a） |
+
+### 验证
+
+```
+tests/test_docker_compose.py: 11 passed
+docker-compose config: ✅ 通过
+全量回归: 463 passed, 零回归
+```
+
+### 回退点
+
+`git commit cd47f3c`（Docker Compose 编排完成基线）
+
+---
+
+## 2026-07-16 Week7-Day2 — README 重写 + LICENSE
+
+### 目标
+
+重写 README.md 为 8 章节完整项目门面，创建 MIT LICENSE。
+
+### README 章节
+
+| # | 章节 | 内容 |
+|---|------|------|
+| 1 | 标题 + 描述 + 徽章行 | 4 个 shields.io 徽章（Python/Tests/License/Status） |
+| 2 | 核心特性 | 6 bullet（LangGraph/MCP/安全/模板/UI/Benchmark） |
+| 3 | 架构图 | Mermaid graph TD（5 节点 + 条件路由） |
+| 4 | 快速开始 | 3 步命令 + Windows/Mac 环境变量 |
+| 5 | Benchmark 表格 | 10 任务完整表 + 均值行 |
+| 6 | 技术亮点 | 12 bullet（量化数字） |
+| 7 | 目录结构 | 精简树（仅关键文件） |
+| 8 | 依赖 + License | 分类表 + MIT |
+
+### 新增文件
+
+| 文件 | 职责 |
+|------|------|
+| `LICENSE` | MIT License © 2026 luoshouer |
+| `README.md` | 重写（150+ 行） |
+
+### 回退点
+
+`git commit 当前状态`
+
+---
+
+## 2026-07-16 Week7-Day3 — 架构文档体系
+
+### 目标
+
+创建 docs/ 下 5 个深度架构文档，含 Mermaid 图表和文档间互链。
+
+### 新增文件清单
+
+| 文件 | 行数 | 内容 |
+|------|------|------|
+| `docs/architecture.md` | ~170 | 4 层架构图 + AgentState 字段表 + 路由规则 + 安全防线表 + 模板协作图 + Benchmark 概览 |
+| `docs/sequence.md` | ~100 | 成功路径 + 调试循环两个 sequenceDiagram |
+| `docs/state-machine.md` | ~120 | stateDiagram-v2 形式化状态机 + 转换表 + 生命周期描述 |
+| `docs/security.md` | ~130 | 5 道防线逐章详解（代码示例 + 回退策略）+ SQL 安全 |
+| `docs/benchmark.md` | ~110 | 10 任务详细表 + 指标公式 + JSONL/MD/HTML 格式说明 |
+
+Mermaid 图表清单（6 个）：graph TD（架构）/ graph LR（模板协作）/ 2 sequenceDiagram / stateDiagram-v2。
+
+### 修改文件
+
+| 文件 | 变更 |
+|------|------|
+| `README.md` | 目录结构增加 `docs/` 条目 + 链接 |
+
+### 回退点
+
+`git commit 当前状态`
+
+---
+
+## 2026-07-16 Week7-Day4 — 4 个 Demo 脚本 + 录屏指南
+
+### 目标
+
+创建/完善 4 个独立可运行的 Demo 脚本（零 API Key 依赖）+ RECORDING_GUIDE.md。
+
+### Demo 脚本清单
+
+| 文件 | 操作 | 内容 |
+|------|------|------|
+| `examples/demo_rich_ui.py` | 修改 | 添加 `--output-dir` 参数 + argparse |
+| `examples/demo_benchmark.py` | 修改 | 添加 `--output-dir` 参数（默认 examples/output/） |
+| `examples/demo_inventory_quick.py` | 新建 | 调用 quick_analyze() 打印中文摘要，支持 --save-report |
+| `examples/demo_text_to_sql.py` | 新建 | 4 步展示 Schema→检查→执行→摘要，绕过 LLM |
+| `examples/RECORDING_GUIDE.md` | 新建 | 4 个录屏场景 + 解说词 + 技术建议 |
+
+### 验证
+
+| Demo | 命令 | 耗时 | 结果 |
+|------|------|------|------|
+| demo_rich_ui.py | python examples/demo_rich_ui.py | ~10s | ✅ |
+| demo_benchmark.py | python examples/demo_benchmark.py | <1s | ✅ MD+HTML 报告 |
+| demo_inventory_quick.py | python examples/demo_inventory_quick.py | ~1.4s | ✅ 中文摘要 |
+| demo_text_to_sql.py | python examples/demo_text_to_sql.py | <1s | ✅ 3 行查询结果 |
+
+### 回退点
+
+`git commit 当前状态`
+
+---
+
+## 2026-07-16 Week7-Day5 — 清理与收尾
+
+### 目标
+
+.gitignore 完善、临时文件清理、pyproject.toml 更新 v0.7.0、文档更新、全量回归、提交。
+
+### 清理内容
+
+- `.gitignore` 更新：新增 `examples/output/`、`*.dockerignore`、`.mypy_cache/`
+- Git 清理：`git rm --cached` 移除 2 个 workspace 临时文件 + 5 个 examples/output 文件
+- `pyproject.toml` 更新：版本 0.7.0、新增 `readme`/`license`/`authors`/`requests`/`flask`、`[project.scripts]` 确认完整
+
+### 代码风格抽查（5 个核心文件全部通过）
+
+| 文件 | 类型注解 | 中文 docstring | 未使用 import | 调试 print() |
+|------|---------|---------------|-------------|-----------|
+| `src/agent/graph.py` | ✅ | ✅ | ✅ | ✅ |
+| `src/agent/nodes/coder.py` | ✅ | ✅ | ✅ | ✅ |
+| `src/domain/templates/inventory_pipeline.py` | ✅ | ✅ | ✅ | ✅ |
+| `src/benchmark/runner.py` | ✅ | ✅ | ✅ | ✅ |
+| `src/agent/ui/manager.py` | ✅ | ✅ | ✅ | ✅ |
+
+### 文档更新
+
+- `DEV_DESIGN.md`：Week 7-8 标记 ✅，架构演进表新增 Week 7 列（Docker Compose、架构文档、Demo）
+- `DEV_LOG.md`：Week 7 Day 1-5 开发日志（本文档）
+
+### 验证
+
+- 全量回归：**463 passed，0 failed，零回归**
+- 4 个 Demo 全部成功
+- `docker-compose config` 通过
+- 11 个新 docker compose 测试通过
+- 语法检查 5 核心文件通过
+
+### Week 7 完整总结
+
+#### 时间线
+
+| 日期 | Day | 内容 | 新增文件 | 新增测试 |
+|------|-----|------|---------|---------|
+| 2026-07-16 | Day 1 | Docker Compose 编排 | 5 | 11 |
+| 2026-07-16 | Day 2 | README 重写 + LICENSE | 2 | — |
+| 2026-07-16 | Day 3 | 架构文档体系 | 5 | — |
+| 2026-07-16 | Day 4 | Demo 脚本 + 录屏指南 | 3 | — |
+| 2026-07-16 | Day 5 | 清理与收尾 | — | — |
+
+#### 完成的子任务清单
+
+- [x] Dockerfile.sandbox — 轻量级 Python 沙箱镜像
+- [x] docker-compose.yml — 双服务编排 + 网络隔离
+- [x] sandbox_server.py — Flask HTTP POST /execute 端点
+- [x] sandbox_client.py — HTTP 客户端（SandboxClient + SandboxUnavailableError）
+- [x] executor.py compose 集成 — 四路径优先级（compose > MCP > Docker > subprocess）
+- [x] README.md 重写 — 8 章节 + Mermaid + 徽章
+- [x] LICENSE — MIT © 2026 luoshouer
+- [x] docs/architecture.md — 4 层架构 + 状态机 + 安全表 + 模板协作图
+- [x] docs/sequence.md — 2 个 sequenceDiagram
+- [x] docs/state-machine.md — stateDiagram-v2 形式化状态机
+- [x] docs/security.md — 5 道防线逐章详解 + SQL 安全
+- [x] docs/benchmark.md — 10 任务详细表 + 指标公式
+- [x] demo_rich_ui.py 完善 — + argparse + --output-dir
+- [x] demo_benchmark.py 完善 — + argparse + --output-dir
+- [x] demo_inventory_quick.py 新建 — quick_analyze 中文摘要
+- [x] demo_text_to_sql.py 新建 — 4 步展示绕过 LLM
+- [x] RECORDING_GUIDE.md — 4 个录屏场景
+- [x] .gitignore 完善 — + examples/output/ + .mypy_cache/ + .dockerignore
+- [x] Git 临时文件清理 — rm --cached 7 个文件
+- [x] pyproject.toml v0.7.0 — + readme/license/authors/requests/flask
+- [x] DEV_DESIGN.md 更新 — Week 7 ✅ + 架构演进表 Week 7 列
+- [x] 全量回归 463/463 通过
+
+#### Week 7 新增文件清单
+
+| 文件 | 职责 |
+|------|------|
+| `Dockerfile.sandbox` | 轻量 sandbox 镜像 |
+| `docker-compose.yml` | 双服务编排 |
+| `src/agent/sandbox/sandbox_server.py` | Flask HTTP 执行服务器 |
+| `src/agent/sandbox/sandbox_client.py` | HTTP 客户端 |
+| `tests/test_docker_compose.py` | 11 项测试 |
+| `LICENSE` | MIT 许可证 |
+| `docs/architecture.md` | 架构设计文档 |
+| `docs/sequence.md` | 时序图文档 |
+| `docs/state-machine.md` | 状态机形式化定义 |
+| `docs/security.md` | 安全纵深防御详解 |
+| `docs/benchmark.md` | Benchmark 框架详解 |
+| `examples/demo_inventory_quick.py` | 供应链快速分析 Demo |
+| `examples/demo_text_to_sql.py` | Text-to-SQL 引擎 Demo |
+| `examples/RECORDING_GUIDE.md` | 录屏指南 |
+
+#### Week 7 修改文件清单
+
+| 文件 | 变更 |
+|------|------|
+| `src/agent/nodes/executor.py` | compose 优先级路径（4a） |
+| `examples/demo_rich_ui.py` | + argparse + --output-dir |
+| `examples/demo_benchmark.py` | + argparse + --output-dir |
+| `README.md` | 重写（8 章节 + Mermaid + 徽章 + 文档链接） |
+| `pyproject.toml` | v0.7.0 + readme/license/authors/requests/flask |
+| `.gitignore` | + examples/output/ + .mypy_cache/ + .dockerignore |
+| `DEV_DESIGN.md` | Week 7 ✅ + 架构演进表新增列 |
+| `DEV_LOG.md` | Week 7 Day 1-5 开发日志 |
+
+### 回退点
+
+`git commit 当前状态`（Week 7 完成基线）

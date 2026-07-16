@@ -209,12 +209,19 @@ Planner → Coder → Executor → [条件路由]
 - [x] Graph 集成（NodeTracer + build_graph(use_ui=True)）
 - **验收**：472 测试通过，零回归。CLI 命令可用。Benchmark 框架完整。
 
-### Week 7-8：工程化 + 面试准备
-- [ ] Docker Compose部署
-- [ ] README + 架构图（Mermaid）
-- [ ] 3分钟Demo视频
+### Week 7-8：工程化 + 面试准备 ✅
+
+- [x] Docker Compose 部署（docker-compose.yml + Dockerfile.sandbox + sandbox_server.py + sandbox_client.py）
+- [x] Executor 四路径集成（compose > MCP > Docker > subprocess）
+- [x] README 重写（8 章节 + Mermaid 架构图 + 徽章 + Benchmark 表格）
+- [x] 架构文档体系（docs/ 5 个文档 + Mermaid 图表）
+- [x] 4 个 Demo 脚本（Rich UI / Benchmark / Inventory / Text-to-SQL）
+- [x] 录屏指南（RECORDING_GUIDE.md）
+- [x] pyproject.toml v0.7.0 + MIT LICENSE
+- [x] .gitignore 完善 + 临时文件清理
+- [ ] 3 分钟 Demo 视频
 - [ ] 简历优化
-- **验收**：GitHub项目可克隆、可运行、可演示
+- **验收**：463 tests 零回归，docker-compose config 通过，4 Demo 全部成功
 
 ---
 
@@ -500,20 +507,22 @@ SQL 安全防线（Text-to-SQL）：
 | 错误诊断 | 6种规则 | 14种规则+DuckDB | 同Week2 | 同Week2 | 同Week2 | 同Week2 |
 | 报告类型 | 单一report | report/fail两种 | +图表链接检测 | 同Week3 | **+增强器自动插入3章节** | +Benchmark MD/HTML |
 | 数据能力 | 无 | 无 | 质量+5图表+SQL+一键分析 | 同Week3 | 同Week3 | 同Week3 |
-| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** | 同Week5 |
-| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 | 同Week4 |
-| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 | 同Week4 |
-| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** | 同Week5 |
-| 终端UI | 无 | 无 | 无 | 无 | 无 | **Rich Live + Tracer** |
-| Benchmark | 无 | 无 | 无 | 无 | 无 | **10任务+Runner+JSONL+报告** |
-| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） | 9个（零新增） |
-| 测试数 | 55 | 144 | 255 | 369 | 390 | **472** |
-| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** |
-| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 |
-| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 |
-| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** |
-| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） |
-| 测试数 | 55 | 144 | 255 | 369 | **390** |
+| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** | 同Week5 | **+Compose+Sandbox** |
+| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 | 同Week4 | **同** |
+| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 | 同Week4 | **同** |
+| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** | 同Week5 | **同** |
+| 终端UI | 无 | 无 | 无 | 无 | 无 | **Rich Live + Tracer** | **同** |
+| Benchmark | 无 | 无 | 无 | 无 | 无 | **10任务+Runner+JSONL+报告** | **同** |
+| Docker编排 | 无 | 无 | 无 | 无 | 无 | 无 | **Compose+Sandbox** |
+| 架构文档 | 无 | 无 | 无 | 无 | 无 | 无 | **5 Mermaid 文档** |
+| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） | 9个（零新增） | **2新增（requests+flask）** |
+| 测试数 | 55 | 144 | 255 | 369 | 390 | **472** | **463** |
+| 领域模板 | 无 | EOQ（骨架） | 3骨架 | 5模板+2引擎 | **+Pipeline+Enhancer** | **+Compose+Sandbox** |
+| 意图分类 | 无 | 无 | 无 | 规则化6类 | 同Week4 | **同** |
+| NL参数提取 | 无 | 无 | 无 | 正则+距离优先85+别名 | 同Week4 | **同** |
+| 场景集成 | 无 | 无 | 无 | 无 | **8步端到端闭环** | **同** |
+| 依赖库 | 5个 | 6个 | 9个 | 9个（零新增） | 9个（零新增） | **同** |
+| 测试数 | 55 | 144 | 255 | 369 | **390** | **472** |
 
 ---
 
