@@ -67,6 +67,11 @@ tmp/
 # Interview docs
 docs/interview/
 
+# Project documentation (not for commit)
+DEV_DESIGN.md
+DEV_LOG.md
+fact_sheet.md
+
 # Misc
 .mypy_cache/
 .pytest_cache/

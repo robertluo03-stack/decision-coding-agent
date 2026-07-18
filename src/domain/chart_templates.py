@@ -7,6 +7,7 @@
         y_col:       Y 轴列名
         title:       图表标题（中文）
         output_path: HTML 输出路径（相对或绝对）
+        auto_open:   生成后是否自动在浏览器打开（默认 True）
 
     Returns:
         str: 写入的 HTML 文件路径（同 output_path）
@@ -16,8 +17,11 @@
     - 图表尺寸 900×600
     - 使用 plotly.io.write_html 输出完整 HTML（含 JS CDN）
     - 不依赖 kaleido（禁止静态图片导出）
+    - 默认自动在浏览器打开（可通过 DECISIONCODER_NO_BROWSER=true 环境变量全局关闭）
 """
 
+import os
+import webbrowser
 from pathlib import Path
 
 import pandas as pd
@@ -44,6 +48,38 @@ def _ensure_output_dir(output_path: str) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _open_chart(output_path: str, auto_open: bool) -> None:
+    """在默认浏览器中打开生成的图表 HTML 文件。
+
+    受环境变量 DECISIONCODER_NO_BROWSER 控制：
+    - 设置为 true/1/yes 时，跳过自动打开（用于 benchmark / CI）
+    - 未设置或设置其他值 → auto_open 参数决定是否打开
+    - pytest 环境下自动跳过（检测 PYTEST_CURRENT_TEST 环境变量）
+
+    Args:
+        output_path: HTML 文件路径（相对或绝对）
+        auto_open: 是否自动打开
+    """
+    # pytest 环境下跳过自动打开
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
+    # 环境变量全局关闭
+    no_browser = os.environ.get("DECISIONCODER_NO_BROWSER", "").strip().lower()
+    if no_browser in ("true", "1", "yes"):
+        return
+
+    if not auto_open:
+        return
+
+    try:
+        abs_path = Path(output_path).resolve()
+        url = abs_path.as_uri()  # file:///C:/... 格式
+        webbrowser.open(url)
+    except Exception:
+        pass  # 打开失败不影响主流程
+
+
 # ---------------------------------------------------------------------------
 # 5 种图表模板
 # ---------------------------------------------------------------------------
@@ -55,6 +91,7 @@ def bar_chart(
     y_col: str,
     title: str,
     output_path: str,
+    auto_open: bool = True,
 ) -> str:
     """类别对比柱状图。
 
@@ -66,6 +103,7 @@ def bar_chart(
         y_col:       数值列名（Y 轴）
         title:       图表标题
         output_path: HTML 输出路径
+        auto_open:   生成后是否自动在浏览器中打开（默认 True）
 
     Returns:
         HTML 文件路径
@@ -86,6 +124,7 @@ def bar_chart(
     )
 
     pio.write_html(fig, file=output_path, auto_open=False)
+    _open_chart(output_path, auto_open)
     return output_path
 
 
@@ -95,6 +134,7 @@ def line_chart(
     y_col: str,
     title: str,
     output_path: str,
+    auto_open: bool = True,
 ) -> str:
     """时间序列折线图。
 
@@ -106,6 +146,7 @@ def line_chart(
         y_col:       数值列名（Y 轴）
         title:       图表标题
         output_path: HTML 输出路径
+        auto_open:   生成后是否自动在浏览器中打开（默认 True）
 
     Returns:
         HTML 文件路径
@@ -134,6 +175,7 @@ def line_chart(
     )
 
     pio.write_html(fig, file=output_path, auto_open=False)
+    _open_chart(output_path, auto_open)
     return output_path
 
 
@@ -143,6 +185,7 @@ def histogram_chart(
     y_col: str,
     title: str,
     output_path: str,
+    auto_open: bool = True,
 ) -> str:
     """数值分布直方图。
 
@@ -158,6 +201,7 @@ def histogram_chart(
         y_col:       可选分组列名（color）；传空字符串则不分色
         title:       图表标题
         output_path: HTML 输出路径
+        auto_open:   生成后是否自动在浏览器中打开（默认 True）
 
     Returns:
         HTML 文件路径
@@ -184,6 +228,7 @@ def histogram_chart(
     )
 
     pio.write_html(fig, file=output_path, auto_open=False)
+    _open_chart(output_path, auto_open)
     return output_path
 
 
@@ -193,6 +238,7 @@ def scatter_chart(
     y_col: str,
     title: str,
     output_path: str,
+    auto_open: bool = True,
 ) -> str:
     """相关性散点图。
 
@@ -204,6 +250,7 @@ def scatter_chart(
         y_col:       Y 轴数值列名
         title:       图表标题
         output_path: HTML 输出路径
+        auto_open:   生成后是否自动在浏览器中打开（默认 True）
 
     Returns:
         HTML 文件路径
@@ -231,6 +278,7 @@ def scatter_chart(
     )
 
     pio.write_html(fig, file=output_path, auto_open=False)
+    _open_chart(output_path, auto_open)
     return output_path
 
 
@@ -240,6 +288,7 @@ def heatmap_chart(
     y_col: str,
     title: str,
     output_path: str,
+    auto_open: bool = True,
 ) -> str:
     """相关性矩阵热力图。
 
@@ -256,6 +305,7 @@ def heatmap_chart(
         y_col:       未直接使用（保留签名一致性）
         title:       图表标题
         output_path: HTML 输出路径
+        auto_open:   生成后是否自动在浏览器中打开（默认 True）
 
     Returns:
         HTML 文件路径
@@ -274,6 +324,7 @@ def heatmap_chart(
             template="plotly_white",
         )
         pio.write_html(fig, file=output_path, auto_open=False)
+        _open_chart(output_path, auto_open)
         return output_path
 
     corr = numeric_df.corr(numeric_only=True)
@@ -297,4 +348,5 @@ def heatmap_chart(
     )
 
     pio.write_html(fig, file=output_path, auto_open=False)
+    _open_chart(output_path, auto_open)
     return output_path

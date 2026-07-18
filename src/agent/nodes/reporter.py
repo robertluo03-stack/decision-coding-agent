@@ -3,14 +3,24 @@
 支持的两种报告模式：
   - 成功报告（无 error，且非 ABORT）：标题 "执行报告"
   - 中止报告（human_feedback == "ABORT"）：标题 "任务中止报告"
+
+报告结构：
+  1. 任务描述
+  2. 执行计划
+  3. 执行结果
+  4. 结果分析（LLM 深度分析，失败时规则回退）
+  5. 错误信息与调试记录（有 error 或 ABORT 时出现）
+  附录 — 生成代码、图表链接、工作区路径
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 
 from src.agent.state import AgentState
+from src.agent.nodes.prompts.loader import load_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +96,10 @@ def _build_report(
         1. 标题与元信息（时间、状态）
         2. 原始需求
         3. 执行计划
-        4. 生成代码
-        5. 执行结果（如存在）
+        4. 执行结果（如存在）
+        5. 结果分析（LLM 深度分析 + 规则回退）
         6. 错误信息 & 调试记录（如存在）
-        7. 附录（工作区、临时文件路径）
+        附录（生成代码、图表链接、工作区路径）
 
     Args:
         state: 当前 AgentState
@@ -146,27 +156,22 @@ def _build_report(
         lines.append("- *(无执行计划)*")
     lines.append("")
 
-    # ---- 生成代码 ----
-    lines.append("## 3. 生成代码")
-    lines.append("")
-    lines.append("```python")
-    code = state.get("generated_code", "")
-    if code:
-        lines.append(code)
-    else:
-        lines.append("# (无代码)")
-    lines.append("```")
-    lines.append("")
-
     # ---- 执行结果 ----
     exec_result = state.get("execution_result")
     if exec_result:
-        lines.append("## 4. 执行结果")
+        lines.append("## 3. 执行结果")
         lines.append("")
         lines.append("```")
         lines.append(exec_result)
         lines.append("```")
         lines.append("")
+
+    # ---- 结果分析（LLM 深度分析） ----
+    analysis = _generate_analysis_with_llm(state, is_aborted=is_aborted, has_error=has_error)
+    lines.append("## 4. 结果分析")
+    lines.append("")
+    lines.append(analysis)
+    lines.append("")
 
     # ---- 错误信息 & 调试记录 ----
     error = state.get("error")
@@ -204,11 +209,25 @@ def _build_report(
         lines.extend(debug_parts)
         lines.append("")
 
-    # ---- 附录 ----
+    # ---- 附录（代码 + 图表 + 文件路径） ----
     lines.append("---")
     lines.append("")
     lines.append("## 附录")
     lines.append("")
+
+    # 生成代码（放在附录中）
+    lines.append("### 生成代码")
+    lines.append("")
+    lines.append("```python")
+    code = state.get("generated_code", "")
+    if code:
+        lines.append(code)
+    else:
+        lines.append("# (无代码)")
+    lines.append("```")
+    lines.append("")
+
+    # 工作区 & 文件路径
     lines.append(f"- **工作区**: `{state.get('workspace_path', 'N/A')}`")
     lines.append(f"- **临时执行文件**: `{state.get('file_path', 'N/A')}`")
     lines.append(f"- **报告文件**: `workspace/reports/{'fail' if is_aborted else 'report'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md`")
@@ -244,6 +263,149 @@ def _format_feedback_label(feedback: str) -> str:
     if feedback == "SKIP":
         return "跳过当前步骤"
     return feedback  # 未识别的直接原文显示
+
+
+# ---------------------------------------------------------------------------
+# LLM 结果分析
+# ---------------------------------------------------------------------------
+
+
+def _generate_analysis_with_llm(
+    state: AgentState,
+    *,
+    is_aborted: bool = False,
+    has_error: bool = False,
+) -> str:
+    """使用 DeepSeek API 对执行结果进行深度分析。
+
+    基于用户需求、执行计划、执行结果，生成包含逻辑链的专业分析报告。
+
+    Args:
+        state: 当前 AgentState
+        is_aborted: 是否人中止
+        has_error: 是否有执行错误
+
+    Returns:
+        Markdown 格式的分析文本（3-5 段）
+    """
+    query = state.get("user_query", "")
+    plan = state.get("plan", [])
+    exec_result = state.get("execution_result", "")
+    error = state.get("error", "")
+
+    # 构建用户消息
+    user_message_parts = []
+    user_message_parts.append(f"用户需求: {query}")
+    user_message_parts.append("")
+    user_message_parts.append("执行计划:")
+    for i, step in enumerate(plan, 1):
+        user_message_parts.append(f"  {i}. {step}")
+    user_message_parts.append("")
+
+    if is_aborted:
+        user_message_parts.append(f"执行状态: 用户主动中止")
+        user_message_parts.append(f"错误信息: {error}")
+    elif has_error:
+        user_message_parts.append(f"执行状态: 执行异常")
+        user_message_parts.append(f"错误信息: {error}")
+    else:
+        user_message_parts.append("执行状态: 成功")
+
+    if exec_result:
+        user_message_parts.append("")
+        user_message_parts.append("执行输出:")
+        user_message_parts.append("```")
+        # 截取前 3000 字符，避免 token 超限
+        truncated = exec_result[:3000]
+        if len(exec_result) > 3000:
+            truncated += "\n... (输出已截断)"
+        user_message_parts.append(truncated)
+        user_message_parts.append("```")
+
+    user_message = "\n".join(user_message_parts)
+
+    # 尝试调用 LLM
+    try:
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY 未设置")
+
+        from langchain_deepseek import ChatDeepSeek
+
+        llm = ChatDeepSeek(
+            model="deepseek-chat",
+            api_key=api_key,
+            temperature=0.3,
+            request_timeout=120,
+            max_retries=2,
+        )
+
+        messages = [
+            {"role": "system", "content": load_prompt("reporter_analysis.md")},
+            {"role": "user", "content": user_message},
+        ]
+
+        response = llm.invoke(messages)
+        content = response.content.strip()
+        logger.info("[Reporter] LLM 分析完成 | analysis_len={}", len(content))
+        return content
+
+    except Exception as exc:
+        logger.warning("[Reporter] LLM 分析失败，回退到规则摘要 | error={}", exc)
+        return _generate_fallback_analysis(state, is_aborted=is_aborted, has_error=has_error)
+
+
+def _generate_fallback_analysis(
+    state: AgentState,
+    *,
+    is_aborted: bool = False,
+    has_error: bool = False,
+) -> str:
+    """LLM 不可用时的规则回退分析。
+
+    Args:
+        state: 当前 AgentState
+        is_aborted: 是否人中止
+        has_error: 是否执行异常
+
+    Returns:
+        简短的 Markdown 分析文本
+    """
+    query = state.get("user_query", "")
+    plan = state.get("plan", [])
+    exec_result = state.get("execution_result", "")
+    error = state.get("error", "")
+    retry_count = state.get("retry_count", 0)
+
+    parts = []
+
+    # 总体评估
+    if is_aborted:
+        parts.append("### 总体评估")
+        parts.append("")
+        parts.append(f"任务已于重试 {retry_count} 次后被中止。错误原因：{error[:200] if error else '未知'}。建议检查输入数据或调整需求后重试。")
+    elif has_error:
+        parts.append("### 总体评估")
+        parts.append("")
+        parts.append(f"任务执行异常，经过 {retry_count} 次重试后仍未成功。")
+        if error:
+            parts.append(f"错误：{error[:300]}")
+    else:
+        parts.append("### 总体评估")
+        parts.append("")
+        parts.append(f"任务执行成功，共完成 {len(plan)} 个步骤。")
+        if exec_result:
+            # 尝试提取关键指标
+            result_text = exec_result[:2000]
+            lines_count = len(result_text.split("\n"))
+            parts.append(f"输出共 {lines_count} 行，详细结果见上方执行输出。")
+
+    parts.append("")
+    parts.append("### 说明")
+    parts.append("")
+    parts.append("*(此为规则生成的简短摘要。设置 DEEPSEEK_API_KEY 环境变量可获得 LLM 深度分析。)*")
+
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------

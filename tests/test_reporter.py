@@ -95,15 +95,17 @@ def test_success_report() -> None:
     _check("✅" in report and "执行成功" in report,
            "状态图标和文本正确（✅ 执行成功）")
 
-    # 必要字段检查
+    # 必要字段检查 — 适应新报告结构
     _check("任务描述" in report or "原始需求" in report,
            "包含任务描述章节")
     _check("执行计划" in report,
            "包含执行计划章节")
     _check("生成代码" in report,
-           "包含生成代码章节")
+           "包含生成代码（应在附录中）")
     _check("执行结果" in report,
            "包含执行结果章节")
+    _check("结果分析" in report,
+           "包含结果分析章节")
 
     # 具体内容
     _check(state["user_query"] in report,
@@ -117,6 +119,12 @@ def test_success_report() -> None:
 
     _check("SKU001    25" in report,
            "包含执行结果输出")
+
+    # 代码应在附录中
+    code_pos = report.find("生成代码")
+    appendix_pos = report.find("## 附录")
+    _check(code_pos > appendix_pos if code_pos > 0 and appendix_pos > 0 else True,
+           "生成代码在附录中（不占据报告主体）")
 
     # 成功报告不应该有错误章节
     _check("错误" not in report or "---" in report,
@@ -322,7 +330,7 @@ def test_edge_empty_fields() -> None:
     s3 = _make_state(execution_result=None)
     r3 = run(s3)["final_report"]
     _check(len(r3) > 50, "None execution_result: 仍然生成有效报告")
-    _check("执行结果" not in r3 or "4. 执行结果" not in r3,
+    _check("执行结果" not in r3 or "3. 执行结果" not in r3,
            "None execution_result: 跳过执行结果章节")
 
     # None error
@@ -395,6 +403,13 @@ def test_markdown_format_integrity() -> None:
     _check(timestamp_match is not None,
            "包含时间戳（YYYY-MM-DD HH:MM:SS 格式）")
 
+    # 新结构验证：附录在结果分析之后
+    analysis_pos = report.find("## 4. 结果分析")
+    appendix_pos = report.find("## 附录")
+    _check(analysis_pos > 0, "包含结果分析章节（第 4 节）")
+    _check(appendix_pos > analysis_pos if analysis_pos > 0 and appendix_pos > 0 else True,
+           "附录在结果分析之后")
+
 
 # ===================================================================
 # 测试 9 — 返回字段正确性
@@ -420,20 +435,23 @@ def test_return_value() -> None:
 # ===================================================================
 
 def test_idempotency() -> None:
-    """相同输入两次调用，报告结构一致（时间戳不同是正常的）。"""
+    """相同输入两次调用，报告结构一致（时间戳和 LLM 分析可能不同）。"""
     print("\n[10] 报告的幂等性")
 
     state = _make_state()
     r1 = run(state)["final_report"]
     r2 = run(state)["final_report"]
 
-    # 去掉时间戳行后比较
-    def _strip_timestamp(s: str) -> str:
-        return re.sub(r"\*\*生成时间\*\*: .*", "", s)
+    # 去掉时间戳行和 LLM 分析行后比较
+    def _strip_variable(s: str) -> str:
+        s = re.sub(r"\*\*生成时间\*\*: .*", "", s)
+        # 去掉 LLM 回退分析（每次可能不同）
+        s = re.sub(r"\n## 4\. 结果分析\n\n.*?\n\n## 5\.", "\n## 4. 结果分析\n\n(analysis)\n\n## 5.", s, flags=re.DOTALL)
+        return s
 
-    s1 = _strip_timestamp(r1)
-    s2 = _strip_timestamp(r2)
-    _check(s1 == s2, "去除时间戳后内容一致（幂等）")
+    s1 = _strip_variable(r1)
+    s2 = _strip_variable(r2)
+    _check(s1 == s2, "去除可变内容后结构一致（幂等）")
 
 
 # ===================================================================
