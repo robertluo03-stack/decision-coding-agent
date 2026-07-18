@@ -58,6 +58,15 @@ workspace/reports/fail_*.md
 # Docker
 *.dockerignore
 
+# Prompts (development prompts, not part of the product)
+promps/
+
+# Temporary files
+tmp/
+
+# Interview docs
+docs/interview/
+
 # Misc
 .mypy_cache/
 .pytest_cache/
