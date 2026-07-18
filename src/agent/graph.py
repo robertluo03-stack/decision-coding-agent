@@ -212,7 +212,7 @@ def build_graph(
 
 def run(
     user_query: str,
-    workspace_path: str = "./src/workspace",
+    workspace_path: str = "./workspace",
     *,
     initial_state_overrides: dict | None = None,
 ) -> dict:

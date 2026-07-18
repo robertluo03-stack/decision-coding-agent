@@ -18,12 +18,6 @@ env/
 .idea/
 
 # Workspace runtime files
-src/workspace/data/*
-src/workspace/reports/*
-src/workspace/tests/*
-!src/workspace/data/.gitkeep
-!src/workspace/reports/.gitkeep
-!src/workspace/tests/.gitkeep
 workspace/data/*
 workspace/reports/*
 workspace/tests/*

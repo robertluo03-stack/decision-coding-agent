@@ -95,13 +95,15 @@ Planner → Coder → Executor → [route_after_executor]
 
 ### 5 个节点 + Executor 三路径
 
+Reporter 报告结构：1.任务描述 → 2.执行计划 → 3.执行结果 → 4.结果分析(LLM) → 5.错误与调试 → 附录(代码+图表+文件路径)。
+
 | 节点 | 文件 | 职责 | 调用 LLM |
 |------|------|------|---------|
 | **Planner** | [planner.py](src/agent/nodes/planner.py) | 拆解需求为 ≤5 步骤 | ✅ DeepSeek（temperature=0.3）|
 | **Coder** | [coder.py](src/agent/nodes/coder.py) | 生成 Python 代码 + 安全检查 + 回退代码 | ✅ DeepSeek（temp=0.3/0.1）|
 | **Executor** | [executor.py](src/agent/nodes/executor.py) | subprocess / MCP / Docker 三路径执行 | ❌ |
 | **Debugger** | [debugger.py](src/agent/nodes/debugger.py) | 14种规则错误分类 + LLM分析 + 人机交互 | ✅ DeepSeek（temp=0.3）|
-| **Reporter** | [reporter.py](src/agent/nodes/reporter.py) | Markdown 报告 + 图表文件检测 | ❌ |
+| **Reporter** | [reporter.py](src/agent/nodes/reporter.py) | Markdown 报告 + 图表检测 + LLM 结果分析（DeepSeek）| ✅ DeepSeek（temp=0.3）|
 
 Executor 三路径：
 - **subprocess**（默认）：`subprocess.run(env={PYTHONPATH: project_root})`，30s 超时
@@ -112,7 +114,7 @@ Executor 三路径：
 
 所有 LLM Prompt 在 [src/agent/nodes/prompts/](src/agent/nodes/prompts/)：
 - **`.md` 文件** — 静态系统提示词（纯中文，直接编辑）：
-  [planner.md](src/agent/nodes/prompts/planner.md)、[coder.md](src/agent/nodes/prompts/coder.md)、[debugger_analysis.md](src/agent/nodes/prompts/debugger_analysis.md)、[debugger_fix.md](src/agent/nodes/prompts/debugger_fix.md)
+  [planner.md](src/agent/nodes/prompts/planner.md)、[coder.md](src/agent/nodes/prompts/coder.md)、[debugger_analysis.md](src/agent/nodes/prompts/debugger_analysis.md)、[debugger_fix.md](src/agent/nodes/prompts/debugger_fix.md)、[reporter_analysis.md](src/agent/nodes/prompts/reporter_analysis.md)
 - **`*_user.py` 文件** — 动态拼接用户消息的 builder 函数
 - **[loader.py](src/agent/nodes/prompts/loader.py)** — `load_prompt(filename)` 从 disk 读取 `.md`，带 `@lru_cache` 缓存
 
@@ -170,7 +172,7 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 - Coder 生成的代码必须禁止 `os.system` / `subprocess` / `eval` / `exec` / `__import__`
 - 所有文件操作限定在 `workspace_path` 下
 - 新增领域模板放在 `src/domain/templates/`，通过 `src/domain/__init__.py` 统一导出
-- 图表模块禁止引入 `kaleido`，只输出 HTML（Plotly JS CDN）
+**图表模块**：5 种 Plotly HTML 图表，支持 `auto_open` 自动浏览器打开，`DECISIONCODER_NO_BROWSER` 环境变量关闭，pytest 环境自动跳过。
 - **E2E 测试**：`tests/test_e2e_week3.py` 依赖 `DEEPSEEK_API_KEY`，测试脚本需显式 `load_dotenv()` 加载 `.env`
 - 所有测试脚本可直接 `python tests/test_xxx.py` 运行，也可 `pytest tests/test_xxx.py -v`
 - **Benchmark 任务**：新增任务定义在 `src/benchmark/tasks.py` 的 `get_default_tasks()` 函数中，保持 5+5 分类（BA-01~05 数据分析，CG-01~05 代码生成），每个任务必须包含 `expected_keywords`（3-5 个，不区分大小写）和明确的 query

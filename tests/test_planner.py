@@ -20,7 +20,7 @@ test_cases = [
         "name": "标准数据分析任务",
         "input": {
             "user_query": "读取data/sales.csv，统计每个sku的总销量，并画出柱状图",
-            "workspace_path": "./src/workspace"
+            "workspace_path": "./workspace"
         },
         "expected_keywords": ["读取", "统计", "sku", "柱状图", "报告"]
     },
@@ -28,7 +28,7 @@ test_cases = [
         "name": "复杂优化任务",
         "input": {
             "user_query": "根据过去6个月的销售数据，预测未来30天需求，并计算每个SKU的安全库存和补货点",
-            "workspace_path": "./src/workspace"
+            "workspace_path": "./workspace"
         },
         "expected_keywords": ["预测", "安全库存", "补货", "需求"]
     },
@@ -36,7 +36,7 @@ test_cases = [
         "name": "简单任务",
         "input": {
             "user_query": "读取data/inventory.csv，检查缺失值",
-            "workspace_path": "./src/workspace"
+            "workspace_path": "./workspace"
         },
         "expected_keywords": ["读取", "缺失值", "检查"]
     },
@@ -44,7 +44,7 @@ test_cases = [
         "name": "边界情况-空输入",
         "input": {
             "user_query": "",
-            "workspace_path": "./src/workspace"
+            "workspace_path": "./workspace"
         },
         "expected_keywords": []  # 应该返回错误提示或空列表
     },
@@ -52,7 +52,7 @@ test_cases = [
         "name": "边界情况-模糊需求",
         "input": {
             "user_query": "分析一下数据",
-            "workspace_path": "./src/workspace"
+            "workspace_path": "./workspace"
         },
         "expected_keywords": ["分析", "数据"]
     }
