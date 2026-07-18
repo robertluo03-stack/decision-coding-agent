@@ -17,7 +17,7 @@ env/
 .vscode/
 .idea/
 
-# Workspace runtime files
+# Workspace runtime files (唯一工作区，由 WORKSPACE_PATH=./workspace 指定)
 workspace/data/*
 workspace/reports/*
 workspace/tests/*

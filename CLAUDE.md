@@ -170,7 +170,7 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 - 每个节点文件导出 `run = xxx_node` 别名（graph.py 的 `_ensure_imports()` 惰性加载依赖此约定）
 - **不要修改 `AgentState` 字段定义**（除非确认）
 - Coder 生成的代码必须禁止 `os.system` / `subprocess` / `eval` / `exec` / `__import__`
-- 所有文件操作限定在 `workspace_path` 下
+- 所有文件操作限定在 `workspace_path` 下（当前唯一工作区为 `workspace/`，由 `.env` 中 `WORKSPACE_PATH=./workspace` 指定）
 - 新增领域模板放在 `src/domain/templates/`，通过 `src/domain/__init__.py` 统一导出
 **图表模块**：5 种 Plotly HTML 图表，支持 `auto_open` 自动浏览器打开，`DECISIONCODER_NO_BROWSER` 环境变量关闭，pytest 环境自动跳过。
 - **E2E 测试**：`tests/test_e2e_week3.py` 依赖 `DEEPSEEK_API_KEY`，测试脚本需显式 `load_dotenv()` 加载 `.env`

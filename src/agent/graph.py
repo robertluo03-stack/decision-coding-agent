@@ -222,7 +222,7 @@ def run(
 
     Args:
         user_query: 用户自然语言需求
-        workspace_path: 工作区路径（默认 ./src/workspace）
+        workspace_path: 工作区路径（默认 ./workspace）
         initial_state_overrides: 可选的初始状态覆盖字段，用于测试注入
 
     Returns:
