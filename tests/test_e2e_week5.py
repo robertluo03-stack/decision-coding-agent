@@ -73,10 +73,15 @@ def _make_state(query: str) -> AgentState:
 
 
 def _invoke(query: str) -> dict:
-    """调用完整 Graph 执行一次任务。"""
+    """调用完整 Graph 执行一次任务。
+
+    将 _safe_input mock 为默认返回 "4"（ABORT），防止 pytest stdin
+    捕获冲突。测试函数可按需用额外的 patch 覆盖此默认值。
+    """
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
-    return graph.invoke(_make_state(query), config)
+    with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
+        return graph.invoke(_make_state(query), config)
 
 
 def _assert_common(result: dict, query_hint: str, *, skip_plan_check: bool = False) -> None:

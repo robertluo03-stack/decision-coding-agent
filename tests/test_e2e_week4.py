@@ -17,6 +17,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -65,10 +66,15 @@ def _make_state(query: str) -> AgentState:
 
 
 def _invoke(query: str) -> dict:
-    """调用完整 Graph 执行一次任务。"""
+    """调用完整 Graph 执行一次任务。
+
+    将 _safe_input mock 为默认返回 "4"（ABORT），防止 pytest stdin
+    捕获冲突。若测试需要其他行为，在测试函数中额外 patch 覆盖即可。
+    """
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
-    return graph.invoke(_make_state(query), config)
+    with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
+        return graph.invoke(_make_state(query), config)
 
 
 # ======================================================================
