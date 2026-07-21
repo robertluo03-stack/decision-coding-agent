@@ -66,7 +66,7 @@ sequenceDiagram
 2. **用户选择选项 4（中止）** — `human_feedback = "ABORT"`
 3. **用户选择选项 3（跳过）** — `human_feedback = "SKIP"`（不触发 Debugger，但 reporter 处理）
 
-ABORT 后 Reporter 生成 `fail_*.md` 而非 `report_*.md`，文件名格式为 `fail_{query摘要}_{timestamp}.md`。
+ABORT 后 Reporter 生成 `fail_*.md` 而非 `report_*.md`，文件名格式为 `fail_YYYYMMDD_HHMMSS.md`。
 
 ---
 

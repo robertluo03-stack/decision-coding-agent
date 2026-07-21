@@ -3,7 +3,7 @@
 面向经营决策与运筹优化的垂直 Coding Agent，基于 LangGraph + MCP + DeepSeek 构建 Plan-Code-Execute-Debug-Report 闭环。
 
 ![Python](https://img.shields.io/badge/python-3.11-blue)
-![Tests](https://img.shields.io/badge/tests-472%2F472-brightgreen)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-week%207-orange)
 
@@ -12,7 +12,7 @@
 - **LangGraph 状态机**：Planner → Coder → Executive → Debugger → Reporter 五节点闭环，支持错误触发自动循环调试和人在回路中断，retry_count≥2 自动退出避免无限循环
 - **MCP 工具层**：基于 FastMCP 的 8 个标准化 Tool — 文件读写、Python 沙箱执行、CSV/Excel 解析、JSON 处理，完形 MCP 协议标准
 - **5 道安全防线**：① LLM 语义意图识别 ② AST 语法级危险调用检测 ③ execute 前编译预检 ④ Docker 容器沙箱兜底 ⑤ SQL 注入关键字拦截 — 全链路纵深防御
-- **7 个供应链模板**：EOQ 经济定量批量、需求预测、安全库存、定量点、一键分析、Text-to-SQL 自然语言问数、5 种 Plotly 图表（直方图/折线/柱状/散点/热力图）
+- **7 个供应链模板**：EOQ 经济订货批量、需求预测、安全库存、补货点、库存管道流水线、一键分析、Text-to-SQL 自然语言问数；另含 5 种 Plotly 图表（柱状/折线/直方图/散点/热力图）
 - **Rich 终端 UI**：5 节点实时进度条 + 多彩状态表格 + 最多 50 条日志滚动面板 + Markdown 调试面板，非 TTY 环境自动降级为 print
 - **Benchmark 评测框架**：10 个预定义任务（5 数据分析 + 5 代码生成），JSONL 逐行追加支持断点续跑，一键生成 Markdown + HTML 报告
 
@@ -79,7 +79,7 @@ python -m benchmark report results.jsonl  # 生成报告
 
 ## 技术亮点
 
-- **472 个测试用例**，全部通过，零回归，覆盖 7 个模块的单元 / 集成 / E2E 测试
+- **测试用例全部通过**，零回归，覆盖 7 个模块的单元 / 集成 / E2E 测试
 - **100% AST 语法级安全检测**，精确拦截 `os.system` / `subprocess` / `eval` / `exec` / `__import__` 及变形写法，零误杀合法文件操作
 - **5 道安全防线**形成全链路纵深防御：LLM 语义层 → AST 语法层 → 编译预检层 → Docker 沙箱层 → SQL 注入层
 - **7 个领域优化模板**覆盖 EOQ、需求预测、安全库存、定量点、库存管道流水线、一键分析和 Text-to-SQL
@@ -117,7 +117,7 @@ decision-coder/
 │   ├── domain/                     # 领域优化模板层
 │   │   └── templates/              # 7 个供应链/数据分析模板
 │   └── benchmark/                  # Benchmark 评测框架
-├── tests/                          # 472 个测试用例（31 个文件）
+├── tests/                          # 测试用例（以 pytest 实跑为准）
 ├── docs/                           # 架构文档
 │   ├── architecture.md             # 架构设计（4 层模型 + 状态机 + 路由规则）
 │   ├── sequence.md                 # 时序图（成功路径 + 调试循环）

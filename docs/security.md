@@ -90,19 +90,19 @@
 
 ## SQL 安全防线（Text-to-SQL）
 
-- **位置**：[text_to_sql.py](../src/domain/text_to_sql.py) → `_is_sql_safe()` + `_sanitize_sql()`
+- **位置**：[text_to_sql.py](../src/domain/text_to_sql.py) → `check_sql_safety()` + `_clean_sql()`
 - **多层保护**：
   1. **LLM 层**：System Prompt 约束 "只生成 SELECT 语句"
-  2. **正则层**：11 种危险关键字检查（不区分大小写）
-  3. **前缀层**：`_is_sql_safe()` 检查 SQL 是否以 SELECT 开头
-- **11 种危险关键字**：
-  `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `CREATE`, `TRUNCATE`, `GRANT`, `REVOKE`, `EXEC`, `EXECUTE`
+  2. **正则层**：12 种危险关键字检查（不区分大小写）
+  3. **前缀层**：`check_sql_safety()` 检查 SQL 是否以 SELECT 开头
+- **12 种危险关键字**：
+  `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `CREATE`, `TRUNCATE`, `EXEC`, `EXECUTE`, `PRAGMA`, `ATTACH`, `DETACH`
 - **拦截示例**：
   ```python
-  _is_sql_safe("SELECT * FROM sales; DROP TABLE sales")
+  check_sql_safety("SELECT * FROM sales; DROP TABLE sales")
   # → False  (包含 DROP)
 
-  _is_sql_safe("SELECT region, AVG(sales) FROM sales GROUP BY region")
+  check_sql_safety("SELECT region, AVG(sales) FROM sales GROUP BY region")
   # → True  (纯 SELECT)
   ```
 - **回退策略**：SQL 不安全时抛出 `ValueError`，不执行查询。

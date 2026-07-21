@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 DecisionCoder 是一个面向经营决策与运筹优化的垂直 Coding Agent。基于 LangGraph StateGraph 编排 Plan-Code-Execute-Debug-Report 闭环，LLM 通过 DeepSeek API 调用。
 
 - **当前阶段**：已完成 Week 7（工程化）
-- **累计测试数**：472（Week1:55 → Week2:144 → Week3:255 → Week4:369 → Week5:390 → Week6:472），全部通过，零回归
+- **累计测试数**：以 pytest 实跑为准（全部通过，零回归）
 
 ## 常用命令
 
@@ -101,14 +101,14 @@ Reporter 报告结构：1.任务描述 → 2.执行计划 → 3.执行结果 →
 |------|------|------|---------|
 | **Planner** | [planner.py](src/agent/nodes/planner.py) | 拆解需求为 ≤5 步骤 | ✅ DeepSeek（temperature=0.3）|
 | **Coder** | [coder.py](src/agent/nodes/coder.py) | 生成 Python 代码 + 安全检查 + 回退代码 | ✅ DeepSeek（temp=0.3/0.1）|
-| **Executor** | [executor.py](src/agent/nodes/executor.py) | subprocess / MCP / Docker 三路径执行 | ❌ |
+| **Executor** | [executor.py](src/agent/nodes/executor.py) | Compose / MCP / subprocess 三路径执行 | ❌ |
 | **Debugger** | [debugger.py](src/agent/nodes/debugger.py) | 14种规则错误分类 + LLM分析 + 人机交互 | ✅ DeepSeek（temp=0.3）|
 | **Reporter** | [reporter.py](src/agent/nodes/reporter.py) | Markdown 报告 + 图表检测 + LLM 结果分析（DeepSeek）| ✅ DeepSeek（temp=0.3）|
 
 Executor 三路径：
-- **subprocess**（默认）：`subprocess.run(env={PYTHONPATH: project_root})`，30s 超时
+- **Compose Sandbox**（最高优先级）：`SANDBOX_URL` 或 `USE_COMPOSE=true` → SandboxClient HTTP 远程执行
 - **MCP**：`USE_MCP=true` → MCP Client (stdio) 调用 python_exec Tool
-- **Docker**：`USE_DOCKER=true` → DockerRunner 容器沙箱（--memory=512m --read-only --network none）
+- **subprocess**（默认/回退）：`subprocess.run(env={PYTHONPATH: project_root})`，30s 超时
 
 ### 提示词管理（已外置）
 
@@ -123,10 +123,11 @@ Executor 三路径：
 2. **数据质量/清洗** → `run_quality_check()`（单一质量检查）
 3. **画图/可视化** → `chart_templates`（5种图表，单一场景）
 4. **自然语言问数** → `run_text_to_sql()`（Text-to-SQL，单一场景）
+5. **供应链库存优化** → `inventory_eoq` / `demand_forecast` / `safety_stock` / `reorder_point`（领域模板）
 
 ### 领域模板层
 
-所有模板在 [src/domain/](src/domain/)，通过 [src/domain/__init__.py](src/domain/__init__.py) 统一导出（8个符号）。
+所有模板在 [src/domain/](src/domain/)，通过 [src/domain/__init__.py](src/domain/__init__.py) 统一导出（36个符号）。
 
 | 模块 | 主函数 | 用途 |
 |------|--------|------|
@@ -142,10 +143,10 @@ Executor 三路径：
 1. **LLM 语义识别**（Planner）→ 拒绝危险意图
 2. **AST 安全检查**（Coder 后置）→ 拦截 os.system/subprocess/eval/exec/__import__/compile
 3. **Executor 执行前预检** → 空代码 + 危险代码(AST) + 语法(compile)
-4. **DockerRunner AST 兜底**（USE_DOCKER=true）→ 落地前再检
-5. **Docker 容器沙箱** → --memory=512m --read-only --network none
+4. **DockerRunner AST 兜底**（DockerRunner.run 入口）→ 落地前再检
+5. **Docker / Compose 容器沙箱** → --memory=512m --read-only --network none
 
-SQL 安全（Text-to-SQL）：LLM 层约束 + 11种危险关键字正则 + SELECT-only 前缀检查。
+SQL 安全（Text-to-SQL）：LLM 层约束 + 12种危险关键字正则 + SELECT-only 前缀检查。
 
 ### 两套回退机制
 

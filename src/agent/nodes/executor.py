@@ -235,7 +235,15 @@ async def _execute_via_mcp(
 def _should_use_compose() -> bool:
     """检查是否应启用 Docker Compose Sandbox 执行路径。
 
-    优先级最高：SANDBOX_URL > USE_COMPOSE=true > USE_MCP > USE_DOCKER > subprocess。
+    Executor 执行路径优先级：
+    Docker Compose 沙箱 > MCP 工具执行 > subprocess 本地执行（默认）。
+
+    满足任一条件即启用 Compose 路径：
+      - SANDBOX_URL 环境变量已设置
+      - USE_COMPOSE=true
+
+    注：Docker 容器隔离（DockerRunner）由 MCP python_exec 工具内部的
+    USE_DOCKER 环境变量控制，不在 Executor 的路径决策中。
 
     Returns:
         True 如果 SANDBOX_URL 环境变量存在，或 USE_COMPOSE=true

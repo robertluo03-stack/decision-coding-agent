@@ -110,7 +110,7 @@ DecisionCoder 实现 **5 道纵深防线**，从 LLM 语义层到 OS 容器层�
 | **第三道** | DockerRunner | [docker_runner.py](../src/agent/sandbox/docker_runner.py) | AST 兜底检查（落地前最后一关） | 变形写法全部拦截 |
 | **第四道** | Docker 容器 | Dockerfile | 资源限制 + 网络隔离 + 只读文件系统 | `--memory=512m --network none --read-only` |
 
-另有 **SQL 安全防线**（Text-to-SQL）：LLM 层约束 + 11 种危险关键字正则 + SELECT-only 前缀检查。
+另有 **SQL 安全防线**（Text-to-SQL）：LLM 层约束 + 12 种危险关键字正则 + SELECT-only 前缀检查。
 
 ## 领域模板层
 
