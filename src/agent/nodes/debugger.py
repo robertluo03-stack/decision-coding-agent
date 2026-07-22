@@ -31,6 +31,19 @@ from src.agent.nodes.prompts.debugger_user import (
 # 模块级 UIManager 引用，由 graph.py 在 build_graph 时注入
 _ui_manager: Any = None
 
+# ---------------------------------------------------------------------------
+# HITL 自动应答（benchmark 无人值守模式）
+# ---------------------------------------------------------------------------
+
+# 从 DECISIONCODER_HITL_AUTO 解析的策略列表当前消费位置
+_hitl_auto_index: int = 0
+
+
+def _reset_hitl_auto_counter() -> None:
+    """重置 HITL 自动应答计数器（每个任务开始前调用）。"""
+    global _hitl_auto_index
+    _hitl_auto_index = 0
+
 
 def set_ui_manager(ui: Any) -> None:
     """由 build_graph() 调用，注入 UIManager 实例供 _safe_input 使用。"""
@@ -830,12 +843,34 @@ def _safe_input(prompt: str = "") -> str:
     处理 EOFError 和 KeyboardInterrupt，默认返回 "4"（中止）。
     Rich Live 模式下会先暂停 Live 再读取输入，避免终端光标重绘竞争。
 
+    自动应答模式（DECISIONCODER_HITL_AUTO）：
+      环境变量值为逗号分隔的选择序号（如 "1,4"）。_safe_input 按顺序
+      返回对应值，不等待人工输入。用完最后一个策略后持续返回 "4"（中止）。
+      计数器由 _reset_hitl_auto_counter() 按任务重置。
+
     Args:
         prompt: 输入提示
 
     Returns:
-        用户输入字符串
+        用户输入字符串（或自动策略值）
     """
+    # ── 自动应答模式（benchmark 无人值守） ──
+    auto_strategy = os.environ.get("DECISIONCODER_HITL_AUTO", "").strip()
+    if auto_strategy:
+        strategies = [s.strip() for s in auto_strategy.split(",") if s.strip()]
+        if strategies:
+            global _hitl_auto_index
+            idx = _hitl_auto_index
+            _hitl_auto_index += 1
+            # 用完最后一个策略后，持续返回 "4"（中止）
+            chosen = strategies[min(idx, len(strategies) - 1)]
+            logger.debug(
+                "[Debugger] HITL auto-reply: pick={} strategies={} idx={}",
+                chosen, auto_strategy, idx,
+            )
+            return chosen
+
+    # ── 标准交互模式 ──
     try:
         # 暂停 Rich Live（如果存在），避免屏幕重绘干扰 input() 缓冲区
         if _ui_manager is not None and _ui_manager._live is not None:

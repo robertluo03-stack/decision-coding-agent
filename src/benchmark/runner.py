@@ -163,6 +163,10 @@ class BenchmarkRunner:
         2. 写入 JSONL（断点续跑友好）
         3. 打印进度（或通过 Rich UI 展示）
 
+        自动设置 DECISIONCODER_HITL_AUTO="1,4"，确保无人值守时
+        Debugger 的 _safe_input 不阻塞等待人工输入。
+        每个任务开始前重置 HITL 自动应答计数器。
+
         Args:
             use_ui: 是否启用 Rich 终端 UI（默认 False）。
 
@@ -175,6 +179,9 @@ class BenchmarkRunner:
 
         # ── Arm 环境切换 ──
         self._toggle_env_for_arm(self.arm)
+
+        # ── HITL 自动应答（benchmark 无人值守） ──
+        self._setup_hitl_auto()
 
         # ── Rich UI 初始化 ──
         ui_manager = None
@@ -200,6 +207,9 @@ class BenchmarkRunner:
 
                     # ── 任务前环境清理 ──
                     self._cleanup_workspace()
+
+                    # ── 重置 HITL 自动应答计数器（每个任务独立） ──
+                    self._reset_hitl_counter()
 
                     # ── Token 追踪 ──
                     start_token_tracking()
@@ -260,6 +270,8 @@ class BenchmarkRunner:
                               f"关键词命中 {result.output_keywords_found}")
 
         finally:
+            # ── 恢复 HITL 环境变量 ──
+            self._restore_hitl_auto()
             if ui_manager is not None:
                 ui_manager.stop()
 
@@ -315,7 +327,32 @@ class BenchmarkRunner:
 
         return collector
 
-    # ── 内部辅助 ──────────────────────────────────────────
+    # ── HITL 自动应答 ──
+
+    _hitl_prev_value: str | None = None  # 保存初始值，用于恢复
+
+    def _setup_hitl_auto(self) -> None:
+        """设置 HITL 自动应答环境变量（默认 "1,4"）。
+
+        保存当前值以便任务结束后恢复。
+        """
+        self._hitl_prev_value = os.environ.get("DECISIONCODER_HITL_AUTO")
+        os.environ["DECISIONCODER_HITL_AUTO"] = "1,4"
+
+    def _restore_hitl_auto(self) -> None:
+        """恢复 HITL 自动应答环境变量到初始值。"""
+        if self._hitl_prev_value is None:
+            os.environ.pop("DECISIONCODER_HITL_AUTO", None)
+        else:
+            os.environ["DECISIONCODER_HITL_AUTO"] = self._hitl_prev_value
+
+    @staticmethod
+    def _reset_hitl_counter() -> None:
+        """重置 HITL 自动应答计数器（每个任务前调用）。"""
+        from src.agent.nodes.debugger import _reset_hitl_auto_counter
+        _reset_hitl_auto_counter()
+
+    # ── 内部辅助（续） ──
 
     @property
     def jsonl_path(self) -> str:

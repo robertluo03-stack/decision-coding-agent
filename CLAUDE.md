@@ -193,6 +193,7 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 | `SANDBOX_URL` | Compose 沙箱服务地址 | URL，如 `http://localhost:8080` |
 | `DECISIONCODER_NO_BROWSER` | 关闭图表自动浏览器打开 | `true` / `1` / `yes` |
 | `DECISIONCODER_NO_ROUTING` | 跳过规则路由，回退到纯 LLM 路由（实验对照） | `true` / `1` / `yes` |
+| `DECISIONCODER_HITL_AUTO` | HITL 自动应答策略（benchmark 无人值守），值如 `"1,4"` 按序返回 | 逗号分隔的选择序号 |
 
 ## AI 写代码时的标准流程
 

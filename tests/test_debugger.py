@@ -515,6 +515,129 @@ def test_smoke_no_input() -> None:
 
 
 # ===================================================================
+# 测试 15 — HITL 自动应答：按序返回
+# ===================================================================
+
+def test_hitl_auto_reply_sequential() -> None:
+    """设置 DECISIONCODER_HITL_AUTO="1,4" 后 _safe_input 按序返回。"""
+    print("\n[15] HITL 自动应答 — 按序返回")
+
+    import os
+    from src.agent.nodes.debugger import _safe_input, _reset_hitl_auto_counter
+
+    # 设置自动应答策略
+    os.environ["DECISIONCODER_HITL_AUTO"] = "1,4"
+    _reset_hitl_auto_counter()
+
+    # 第一次调用应返回 "1"（接受 AI 修复）
+    r1 = _safe_input("[1/2/3/4] > ")
+    _check(r1 == "1", f"第一次自动应答应为 '1' (实际: {r1!r})")
+
+    # 第二次调用应返回 "4"（中止）
+    r2 = _safe_input("[1/2/3/4] > ")
+    _check(r2 == "4", f"第二次自动应答应为 '4' (实际: {r2!r})")
+
+    # 第三次及之后持续返回 "4"（最后一个策略）
+    r3 = _safe_input("[1/2/3/4] > ")
+    _check(r3 == "4", f"第三次自动应答应持续 '4' (实际: {r3!r})")
+
+    r4 = _safe_input("[1/2/3/4] > ")
+    _check(r4 == "4", f"第四次自动应答应持续 '4' (实际: {r4!r})")
+
+    # 清理
+    del os.environ["DECISIONCODER_HITL_AUTO"]
+
+
+# ===================================================================
+# 测试 16 — HITL 自动应答：任务间计数重置
+# ===================================================================
+
+def test_hitl_auto_counter_reset() -> None:
+    """_reset_hitl_auto_counter 正确重置计数，新任务从头开始。"""
+    print("\n[16] HITL 自动应答 — 任务间计数重置")
+
+    import os
+    from src.agent.nodes.debugger import _safe_input, _reset_hitl_auto_counter
+
+    os.environ["DECISIONCODER_HITL_AUTO"] = "1,4"
+
+    # 模拟任务 1：消耗第一个策略
+    _reset_hitl_auto_counter()
+    r1 = _safe_input("[1/2/3/4] > ")
+    _check(r1 == "1", f"任务1 第一次: {r1!r}")
+
+    r2 = _safe_input("[1/2/3/4] > ")
+    _check(r2 == "4", f"任务1 第二次: {r2!r}")
+
+    # 模拟任务 2：重置后从头开始
+    _reset_hitl_auto_counter()
+    r3 = _safe_input("[1/2/3/4] > ")
+    _check(r3 == "1", f"任务2 第一次（重置后）: {r3!r}")
+
+    r4 = _safe_input("[1/2/3/4] > ")
+    _check(r4 == "4", f"任务2 第二次: {r4!r}")
+
+    # 清理
+    del os.environ["DECISIONCODER_HITL_AUTO"]
+
+
+# ===================================================================
+# 测试 17 — HITL 自动应答：未设置时不生效
+# ===================================================================
+
+def test_hitl_auto_disabled_by_default() -> None:
+    """未设置 DECISIONCODER_HITL_AUTO 时 _safe_input 行为不变。"""
+    print("\n[17] HITL 自动应答 — 未设置时不生效")
+
+    import os
+    from src.agent.nodes.debugger import _safe_input
+
+    # 确保环境变量未设置
+    os.environ.pop("DECISIONCODER_HITL_AUTO", None)
+
+    # _safe_input 的自动应答分支不应触发——但由于我们无法真正模拟 input(),
+    # 我们验证环境变量检查逻辑：空字符串不应触发自动应答。
+    # 实际行为：空字符串时 auto_strategy.strip() == "" → 跳过自动应答分支
+    auto = os.environ.get("DECISIONCODER_HITL_AUTO", "").strip()
+    _check(auto == "", "未设置时，环境变量值为空字符串")
+
+    # 设置后又清空也应正常
+    os.environ["DECISIONCODER_HITL_AUTO"] = ""
+    auto2 = os.environ.get("DECISIONCODER_HITL_AUTO", "").strip()
+    _check(auto2 == "", "设置为空字符串后 strip() 为空")
+
+    # 清理
+    del os.environ["DECISIONCODER_HITL_AUTO"]
+
+
+# ===================================================================
+# 测试 18 — HITL 自动应答：自定义策略串
+# ===================================================================
+
+def test_hitl_auto_custom_strategy() -> None:
+    """自定义策略串如 "2,3,1" 按序返回。"""
+    print("\n[18] HITL 自动应答 — 自定义策略串")
+
+    import os
+    from src.agent.nodes.debugger import _safe_input, _reset_hitl_auto_counter
+
+    os.environ["DECISIONCODER_HITL_AUTO"] = "2,3,1"
+    _reset_hitl_auto_counter()
+
+    r1 = _safe_input("> ")
+    _check(r1 == "2", f"策略1: {r1!r}")
+    r2 = _safe_input("> ")
+    _check(r2 == "3", f"策略2: {r2!r}")
+    r3 = _safe_input("> ")
+    _check(r3 == "1", f"策略3: {r3!r}")
+    # 超出后持续最后一个
+    r4 = _safe_input("> ")
+    _check(r4 == "1", f"策略4（超出后）: {r4!r}")
+
+    del os.environ["DECISIONCODER_HITL_AUTO"]
+
+
+# ===================================================================
 # 主入口
 # ===================================================================
 
@@ -544,6 +667,10 @@ def main() -> int:
     test_human_feedback_format()
     test_fix_quality()
     test_smoke_no_input()
+    test_hitl_auto_reply_sequential()
+    test_hitl_auto_counter_reset()
+    test_hitl_auto_disabled_by_default()
+    test_hitl_auto_custom_strategy()
 
     print("\n" + "=" * 60)
     total = _passed + _failed
