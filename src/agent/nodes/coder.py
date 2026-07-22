@@ -81,6 +81,8 @@ def _generate_code_with_llm(
     plan: list[str],
     query: str,
     workspace: str,
+    template_match: dict | None = None,
+    extracted_params: dict[str, float] | None = None,
 ) -> str:
     """使用 DeepSeek API 生成 Python 代码。
 
@@ -88,6 +90,9 @@ def _generate_code_with_llm(
         plan: 执行计划步骤列表
         query: 用户原始自然语言需求
         workspace: 工作区绝对路径（仅用于上下文，不硬编码到代码中）
+        template_match: 可选，规则路由匹配结果 dict，
+            包含 template_type (str) 和 confidence (float)。
+        extracted_params: 可选，规则路由提取的参数 dict。
 
     Returns:
         生成的 Python 代码字符串
@@ -111,7 +116,11 @@ def _generate_code_with_llm(
 
     messages = [
         {"role": "system", "content": load_prompt("coder.md")},
-        {"role": "user", "content": build_coder_user_message(query, plan)},
+        {"role": "user", "content": build_coder_user_message(
+            query, plan,
+            template_match=template_match,
+            extracted_params=extracted_params,
+        )},
     ]
 
     response = llm.invoke(messages)
@@ -204,6 +213,70 @@ def _generate_fallback_code(
 
 
 # ---------------------------------------------------------------------------
+# 规则路由层（接入 template_matcher + param_extractor）
+# ---------------------------------------------------------------------------
+# 在 Coder 调用 LLM 之前，先尝试用 template_matcher 识别用户意图模板。
+# 高置信命中时，将模板类型和提取到的参数注入 Coder 的 user message，
+# 引导 LLM 精确调用对应领域模板函数。UNKNOWN 时保持纯 LLM 路由不变。
+
+
+def _run_rule_routing(query: str) -> tuple[dict | None, dict[str, float] | None]:
+    """运行规则路由：模板匹配 + 参数提取。
+
+    仅在 template_matcher / param_extractor 可用且返回非 UNKNOWN
+    结果时返回有效数据；任何异常都会安全回退。
+
+    Args:
+        query: 用户原始自然语言需求
+
+    Returns:
+        (template_match_dict, extracted_params_dict) 二元组。
+        template_match_dict 包含 template_type (str) 和 confidence (float)。
+        UNKNOWN 或异常时返回 (None, None)。
+    """
+    try:
+        from src.domain.template_matcher import match_template, TemplateType
+        from src.domain.param_extractor import extract_params_for_template
+
+        result = match_template(query)
+
+        if result.template_type == TemplateType.UNKNOWN:
+            logger.info("[Coder] 规则路由未命中（UNKNOWN），保持 LLM 路由")
+            return None, None
+
+        logger.info(
+            "[Coder] 规则路由命中 | template={} | confidence={:.1f} | keywords={!r}",
+            result.template_type.value,
+            result.confidence,
+            result.matched_keywords,
+        )
+
+        params = extract_params_for_template(query, result.template_type)
+
+        template_match = {
+            "template_type": result.template_type.value,
+            "confidence": result.confidence,
+        }
+
+        if params:
+            logger.info(
+                "[Coder] 参数提取成功 | params={}",
+                {k: v for k, v in params.items()},
+            )
+        else:
+            logger.info("[Coder] 参数提取结果为空")
+
+        return template_match, params
+
+    except ImportError:
+        logger.info("[Coder] 规则模块不可用，保持 LLM 路由")
+        return None, None
+    except Exception as exc:
+        logger.warning("[Coder] 规则路由异常，回退 LLM 路由 | error={}", exc)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
 # Main node entry point
 # ---------------------------------------------------------------------------
 
@@ -273,9 +346,16 @@ def coder_node(state: AgentState) -> dict:
         )
         return {"generated_code": code}
 
-    # ---- 正常路径：使用 DeepSeek LLM 生成代码 ----
+    # ---- 正常路径：规则路由 + DeepSeek LLM 生成代码 ----
     try:
-        code = _generate_code_with_llm(plan, query, workspace)
+        # 规则路由：尝试模板匹配 + 参数提取
+        template_match, extracted_params = _run_rule_routing(query)
+
+        code = _generate_code_with_llm(
+            plan, query, workspace,
+            template_match=template_match,
+            extracted_params=extracted_params,
+        )
     except Exception as exc:
         logger.error("[Coder] LLM 生成失败 | type={} | message={}", type(exc).__name__, exc)
         code = _generate_fallback_code(plan, query, workspace, error=str(exc))
