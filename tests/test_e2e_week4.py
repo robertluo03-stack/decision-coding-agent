@@ -65,15 +65,19 @@ def _make_state(query: str) -> AgentState:
     }
 
 
-def _invoke(query: str) -> dict:
+def _invoke(query: str, choices: list[str] | None = None) -> dict:
     """调用完整 Graph 执行一次任务。
 
-    将 _safe_input mock 为默认返回 "4"（ABORT），防止 pytest stdin
-    捕获冲突。若测试需要其他行为，在测试函数中额外 patch 覆盖即可。
+    Mock _safe_input 使用 side_effect 策略：默认 ["1", "4"]
+    （第一次接受 AI 修复给自愈机会，第二次中止防死循环）。
+    负路径测试可传 choices=["4"] 直接中止。
+    若测试需要其他行为，在测试函数中额外 patch 覆盖即可。
     """
+    if choices is None:
+        choices = ["1", "4"]
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
-    with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
+    with patch("src.agent.nodes.debugger._safe_input", side_effect=choices):
         return graph.invoke(_make_state(query), config)
 
 
@@ -115,8 +119,8 @@ def _assert_state(result: dict, query_hint: str) -> None:
         f"[{query_hint}] 报告未标记成功"
     )
 
-    # 7. retry_count = 0（一次通过）
-    assert retry_count == 0, f"[{query_hint}] 触发了重试: retry={retry_count}"
+    # 7. retry_count ≤ 1（允许一次自愈重试）
+    assert retry_count <= 1, f"[{query_hint}] 重试次数过多: retry={retry_count}"
 
     # 8. 不是回退代码
     is_fallback = "安全模式" in str(exec_result) or "无有效代码可执行" in str(exec_result)

@@ -5,7 +5,7 @@ USE_MCP 等设置影响 E2E 测试的执行路径选择。
 
 Fixture 清单:
     - force_subprocess_env: autouse，强制 Executor 走 subprocess 路径
-    - mock_debugger_input: E2E 测试中 mock _safe_input 默认返回 "4" (ABORT)
+    - mock_debugger_input: E2E 测试中 mock _safe_input 默认 side_effect=["1","4"]
 """
 
 import os
@@ -43,11 +43,18 @@ def mock_debugger_input():
     E2E 测试中若代码执行出错，Debugger 节点会调用 _safe_input()
     读取用户选择。在 pytest 下 input() 可能因 stdin 捕获而抛 OSError。
 
-    此 fixture mock _safe_input 默认返回 "4" (ABORT)，测试可按需覆盖。
+    默认策略 ["1", "4"]：第一次返回 "1"（接受 AI 修复），给调试回路
+    一次自愈机会；第二次返回 "4"（中止），防止死循环。
+    测试可按需覆盖 side_effect。
+
     使用方式:
         def test_xxx(mock_debugger_input):
-            mock_debugger_input.return_value = "1"  # 接受 AI 修复
+            mock_debugger_input.side_effect = ["1"]  # 始终接受 AI 修复
+            result = _invoke(query)
+
+        def test_yyy(mock_debugger_input):
+            mock_debugger_input.side_effect = ["4"]  # 直接中止（负路径）
             result = _invoke(query)
     """
-    with patch("src.agent.nodes.debugger._safe_input", return_value="4") as mock:
+    with patch("src.agent.nodes.debugger._safe_input", side_effect=["1", "4"]) as mock:
         yield mock

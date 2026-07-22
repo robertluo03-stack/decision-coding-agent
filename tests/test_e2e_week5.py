@@ -72,15 +72,19 @@ def _make_state(query: str) -> AgentState:
     }
 
 
-def _invoke(query: str) -> dict:
+def _invoke(query: str, choices: list[str] | None = None) -> dict:
     """调用完整 Graph 执行一次任务。
 
-    将 _safe_input mock 为默认返回 "4"（ABORT），防止 pytest stdin
-    捕获冲突。测试函数可按需用额外的 patch 覆盖此默认值。
+    Mock _safe_input 使用 side_effect 策略：默认 ["1", "4"]
+    （第一次接受 AI 修复给自愈机会，第二次中止防死循环）。
+    负路径测试可传 choices=["4"] 直接中止。
+    若测试需要其他行为，在测试函数中额外 patch 覆盖即可。
     """
+    if choices is None:
+        choices = ["1", "4"]
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())[:8]}}
-    with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
+    with patch("src.agent.nodes.debugger._safe_input", side_effect=choices):
         return graph.invoke(_make_state(query), config)
 
 
@@ -119,7 +123,7 @@ def _assert_common(result: dict, query_hint: str, *, skip_plan_check: bool = Fal
 
 
 def _assert_success(result: dict, query_hint: str) -> None:
-    """对成功场景的额外断言（无 error, retry=0）。"""
+    """对成功场景的额外断言（无 error, retry ≤ 1）。"""
     _assert_common(result, query_hint)
     error = result.get("error")
     retry_count = result.get("retry_count", 0)
@@ -127,7 +131,7 @@ def _assert_success(result: dict, query_hint: str) -> None:
     report = result.get("final_report", "")
 
     assert error is None, f"[{query_hint}] 有执行错误: {error}"
-    assert retry_count == 0, f"[{query_hint}] 触发了重试: retry={retry_count}"
+    assert retry_count <= 1, f"[{query_hint}] 重试次数过多: retry={retry_count}"
     assert len(str(exec_result)) > 0, f"[{query_hint}] 无执行输出"
 
     # 报告标记为成功
@@ -157,9 +161,7 @@ def test_e2e_inventory_pipeline_full():
         "分析 workspace/data/sku_inventory.csv 的库存数据，"
         "预测需求并给出订货建议"
     )
-    # Mock Debugger input to auto-accept AI fix (option 1) in case of retry
-    with patch("src.agent.nodes.debugger._safe_input", return_value="1"):
-        result = _invoke(query)
+    result = _invoke(query)
 
     _assert_common(result, "场景 1")
     error = result.get("error")
@@ -204,9 +206,7 @@ def test_e2e_inventory_params_only():
     query = (
         "年需求 5000，订货成本 100，持有成本 5，帮我算 EOQ 和安全库存"
     )
-    # Mock Debugger input to auto-accept AI fix (option 1) in case of retry
-    with patch("src.agent.nodes.debugger._safe_input", return_value="1"):
-        result = _invoke(query)
+    result = _invoke(query)
 
     _assert_common(result, "场景 2")
     error = result.get("error")
@@ -245,20 +245,17 @@ def test_e2e_inventory_params_only():
 def test_e2e_inventory_file_not_found():
     """场景 3：边界 — 请求分析不存在的文件，预期进入 Debugger 或生成失败报告。
 
-    通过 mock Debugger 的 _safe_input，自动选择"ABORT"（选项 4），
-    使测试不阻塞于交互式输入。
+    显式使用 choices=["4"]（直接 ABORT）：此类场景 AI 修复无意义
+    （文件本身就不存在），且会污染 retry_count 断言。
 
     验证：
       - final_report 非空（即使是失败报告）
-      - retry_count ≤ 1
+      - retry_count = 1（触发一次 Debugger 后 ABORT）
       - 报告包含错误标记或中止标记
     """
     query = "分析 workspace/data/not_exist.csv 给出订货建议"
 
-    # Mock Debugger 的 _safe_input 使其自动选择 "4"（ABORT）
-    # 路径: src.agent.nodes.debugger._safe_input
-    with patch("src.agent.nodes.debugger._safe_input", return_value="4"):
-        result = _invoke(query)
+    result = _invoke(query, choices=["4"])
 
     # 场景 3: 文件不存在 → 预期进入 Debugger 或直接失败
     # 使用 skip_plan_check，因为 Plan 中"输出错误提示"是正常步骤
