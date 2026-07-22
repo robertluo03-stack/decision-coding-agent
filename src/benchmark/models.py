@@ -16,7 +16,7 @@ class BenchmarkTask:
 
     Attributes:
         id: 任务唯一标识（如 "BA-01"）。
-        category: 任务类别（data_analysis | code_generation）。
+        category: 任务类别（data_analysis | code_generation | adversarial）。
         query: 自然语言需求（传给 Agent）。
         expected_keywords: 预期输出中应包含的关键词（用于自动验证）。
         timeout: 执行超时时间（秒），默认 60。
@@ -24,7 +24,7 @@ class BenchmarkTask:
     """
 
     id: str
-    category: Literal["data_analysis", "code_generation"]
+    category: Literal["data_analysis", "code_generation", "adversarial"]
     query: str
     expected_keywords: list[str]
     timeout: int = 60
@@ -44,6 +44,10 @@ class BenchmarkResult:
         error: 错误信息（None 表示无错误）。
         output_keywords_found: 实际找到的 expected_keywords 子集。
         report_path: 生成的报告文件路径（None 表示无报告）。
+        run_index: 重复运行序号（1-based，默认 1）。
+        arm: 实验臂名称（"routing_on" | "routing_off"）。
+        token_usage: Token 用量 {prompt_tokens, completion_tokens, total_tokens}。
+        numeric_value: 从执行结果中提取的核心数值（None 表示无）。
     """
 
     task_id: str
@@ -54,3 +58,7 @@ class BenchmarkResult:
     error: str | None = None
     output_keywords_found: list[str] = field(default_factory=list)
     report_path: str | None = None
+    run_index: int = 1
+    arm: str = "routing_on"
+    token_usage: dict | None = None
+    numeric_value: float | None = None

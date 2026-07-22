@@ -97,6 +97,49 @@ python -m benchmark report results/benchmark_20260716_103000.jsonl
 python -m benchmark --help
 ```
 
+## 对照实验（Arm 对比）
+
+支持双臂对照实验，验证规则路由对端到端成功率/一致率/Token 成本的贡献。
+
+```bash
+# 单臂 routing_off（每任务重复 3 次）
+python -m benchmark run --arm routing_off --repeat 3
+
+# 双臂对照（routing_on + routing_off，各 3 次重复）
+python -m benchmark run --both
+
+# 双臂 + 对抗任务集（10 默认 + 7 对抗）× 2 arms × 3 repeats = 102 次执行
+python -m benchmark run --both --adversarial
+```
+
+### Arm 对比报告示例
+
+生成的 MD/HTML 报告包含 Arm 对比章节：
+
+| 指标 | routing_on | routing_off |
+|------|-----------|-------------|
+| 成功率 | 85% | 72% |
+| 结果一致率 | 90% | 80% |
+| Average Tokens | 12,345 | 14,000 |
+| 平均耗时 | 14.2s | 16.8s |
+
+### 对抗任务集（7 个）
+
+| ID | 类别 | 描述 |
+|----|------|------|
+| ADV-01 | EOQ 标准说法 | "年需求1000，订货成本50，持有成本2，帮我算EOQ" |
+| ADV-02 | EOQ 口语化 | "每年要卖1000件，每次下单花50..." |
+| ADV-03 | EOQ 数学符号 | "D=1000, S=50, H=2, 算一下经济订货批量" |
+| ADV-04 | EOQ 中文数字 | "年需求量一千，订货成本五十，单位持有成本二" |
+| ADV-05 | EOQ 英文参数 | "EOQ计算：annual_demand=1000, ordering_cost=50..." |
+| ADV-06 | 模板外 | "写一个函数判断字符串是否为回文并测试" |
+| ADV-07 | 模板外 | "产品原价100元，打8折后参加满300减50..." |
+
+### 一致率计算
+
+同一任务同一 arm 的 3 次重复中，核心数值结果（中位数参考）偏差在 ±5% 内的比例。
+仅对含确定性数值输出的任务（EOQ/安全库存/补货点/需求预测）进行提取和比较。
+
 ## 架构组件
 
 | 组件 | 文件 | 职责 |

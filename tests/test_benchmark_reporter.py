@@ -65,7 +65,7 @@ class TestMarkdownReport:
             assert "## 分类统计" in md
             assert "## 任务明细" in md
             assert "## 失败任务错误摘要" in md
-            assert "**任务总数**: 5" in md
+            assert "**结果总数**: 5" in md
 
     def test_generate_md_metrics(self) -> None:
         """验证完成率/成功率数字正确。"""

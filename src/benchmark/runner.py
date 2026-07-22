@@ -2,6 +2,13 @@
 
 BenchmarkRunner — 遍历任务集，逐个执行 graph.run()，收集结果写入 JSONL。
 支持 use_ui=True 时通过 Rich 终端 UI 实时展示进度。
+
+新增（对照实验）：
+- arm 参数（routing_on / routing_off）
+- repeat 参数（重复运行次数，默认 1）
+- token 用量追踪（token_tracker）
+- 数值结果提取（numeric_extractor）
+- run_both() 双臂对照执行
 """
 
 from __future__ import annotations
@@ -17,6 +24,8 @@ from typing import Any
 from src.benchmark.models import BenchmarkResult, BenchmarkTask
 from src.benchmark.metrics import MetricsCollector
 from src.benchmark.validators import validate_task_result
+from src.benchmark.token_tracker import start_token_tracking, stop_token_tracking, get_token_totals
+from src.benchmark.numeric_extractor import extract_numeric_value
 
 
 class BenchmarkTimeoutError(Exception):
@@ -33,6 +42,9 @@ class BenchmarkRunner:
         runner = BenchmarkRunner(tasks, workspace_path="workspace/")
         collector = runner.run_all()
 
+        # 双臂对照
+        collector = runner.run_both(repeat=3)
+
         # 带 Rich UI
         collector = runner.run_all(use_ui=True)
     """
@@ -42,6 +54,8 @@ class BenchmarkRunner:
         tasks: list[BenchmarkTask],
         workspace_path: str = "workspace/",
         output_dir: str = "results/",
+        arm: str = "routing_on",
+        repeat: int = 1,
     ) -> None:
         """初始化执行引擎。
 
@@ -49,10 +63,14 @@ class BenchmarkRunner:
             tasks: 待执行的 benchmark 任务列表。
             workspace_path: 工作区根路径。
             output_dir: JSONL 输出目录（相对于项目根）。
+            arm: 实验臂（"routing_on" | "routing_off"）。
+            repeat: 每个任务的重复执行次数（默认 1）。
         """
         self.tasks = tasks
         self.workspace_path = str(Path(workspace_path).resolve())
         self.output_dir = str(Path(output_dir).resolve())
+        self.arm = arm
+        self.repeat = max(repeat, 1)
 
         # 确保输出目录存在
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
@@ -152,7 +170,11 @@ class BenchmarkRunner:
             MetricsCollector（包含全部 BenchmarkResult）。
         """
         n = len(self.tasks)
+        total_runs = n * self.repeat
         collector = MetricsCollector()
+
+        # ── Arm 环境切换 ──
+        self._toggle_env_for_arm(self.arm)
 
         # ── Rich UI 初始化 ──
         ui_manager = None
@@ -164,48 +186,78 @@ class BenchmarkRunner:
             self._jsonl_path.unlink()
 
         try:
-            for i, task in enumerate(self.tasks):
-                if not use_ui:
-                    print(f"\n{'─' * 50}")
-                    print(f"[{i + 1}/{n}] {task.id} — {task.category}")
-                    print(f"{'─' * 50}")
+            run_counter = 0
 
-                # ── 任务前环境清理 ──
-                self._cleanup_workspace()
+            for run_i in range(1, self.repeat + 1):
+                for task_i, task in enumerate(self.tasks):
+                    run_counter += 1
 
-                # ── 执行 ──
-                if use_ui and ui_manager is not None:
-                    ui_manager.log(f"[{task.id}] 开始执行...", level="info")
-                else:
-                    print(f"  执行中...")
+                    if not use_ui:
+                        print(f"\n{'─' * 50}")
+                        print(f"[{run_counter}/{total_runs}] {task.id} — "
+                              f"{task.category} — arm={self.arm} — run {run_i}/{self.repeat}")
+                        print(f"{'─' * 50}")
 
-                state, elapsed = self.run_single(task)
+                    # ── 任务前环境清理 ──
+                    self._cleanup_workspace()
 
-                # ── 验证 ──
-                result = validate_task_result(
-                    task, state, round(elapsed, 2), self.workspace_path
-                )
-                # 注入 category（供 MetricsCollector 分组）
-                result.category = task.category  # type: ignore[attr-defined]
-                collector.record(result)
+                    # ── Token 追踪 ──
+                    start_token_tracking()
 
-                # ── 写入 JSONL ──
-                self._append_jsonl(result)
+                    # ── 执行 ──
+                    if use_ui and ui_manager is not None:
+                        ui_manager.log(
+                            f"[{task.id}] arm={self.arm} run={run_i} 开始...",
+                            level="info",
+                        )
+                    else:
+                        print(f"  执行中...")
 
-                # ── 打印结果 ──
-                if use_ui and ui_manager is not None:
-                    status_icon = "✅" if result.success else ("❌" if result.completed else "⏱")
-                    ui_manager.log(
-                        f"{status_icon} [{task.id}] {result.elapsed_seconds:.1f}s | "
-                        f"重试 {result.retry_count} | "
-                        f"命中 {result.output_keywords_found}",
-                        level="info" if result.success else "error",
+                    state, elapsed = self.run_single(task)
+
+                    # ── 收集 token 用量 ──
+                    token_usage = get_token_totals()
+
+                    # ── 停止 Token 追踪 ──
+                    stop_token_tracking()
+
+                    # ── 提取数值结果 ──
+                    numeric_value = extract_numeric_value(
+                        task.id,
+                        str(state.get("execution_result", "")),
                     )
-                else:
-                    verdict = "✅ 通过" if result.success else ("❌ 失败" if result.completed else "⏱ 超时")
-                    print(f"  {verdict} | 耗时 {result.elapsed_seconds:.1f}s | "
-                          f"重试 {result.retry_count} | "
-                          f"关键词命中 {result.output_keywords_found}")
+
+                    # ── 验证 ──
+                    result = validate_task_result(
+                        task, state, round(elapsed, 2), self.workspace_path
+                    )
+                    # 注入扩展字段
+                    result.category = task.category  # type: ignore[attr-defined]
+                    result.run_index = run_i
+                    result.arm = self.arm
+                    result.token_usage = token_usage
+                    result.numeric_value = numeric_value
+
+                    collector.record(result)
+
+                    # ── 写入 JSONL ──
+                    self._append_jsonl(result)
+
+                    # ── 打印结果 ──
+                    if use_ui and ui_manager is not None:
+                        status_icon = "✅" if result.success else ("❌" if result.completed else "⏱")
+                        ui_manager.log(
+                            f"{status_icon} [{task.id}] {result.elapsed_seconds:.1f}s | "
+                            f"重试 {result.retry_count} | token={token_usage.get('total_tokens', 0)} | "
+                            f"命中 {result.output_keywords_found}",
+                            level="info" if result.success else "error",
+                        )
+                    else:
+                        verdict = "✅ 通过" if result.success else ("❌ 失败" if result.completed else "⏱ 超时")
+                        print(f"  {verdict} | 耗时 {result.elapsed_seconds:.1f}s | "
+                              f"重试 {result.retry_count} | "
+                              f"token={token_usage.get('total_tokens', 0)} | "
+                              f"关键词命中 {result.output_keywords_found}")
 
         finally:
             if ui_manager is not None:
@@ -215,13 +267,51 @@ class BenchmarkRunner:
         metrics = collector.compute()
         if not use_ui:
             print(f"\n{'═' * 50}")
-            print(f"Benchmark 完成：{metrics['total']} 个任务")
+            print(f"Benchmark 完成：arm={self.arm} | {metrics['total']} 个结果")
             print(f"  完成率:  {metrics['completion_rate']}")
             print(f"  成功率:  {metrics['success_rate']}")
             print(f"  平均重试: {metrics['avg_retry_count']}")
             print(f"  平均耗时: {metrics['avg_elapsed_seconds']}s")
+            if "token_total" in metrics:
+                print(f"  Token 总量: {metrics['token_total']}")
             print(f"  结果文件: {self._jsonl_path}")
             print(f"{'═' * 50}")
+
+        return collector
+
+    def run_both(self, repeat: int = 3) -> MetricsCollector:
+        """双臂对照执行：routing_on → routing_off。
+
+        顺序执行两个 arm，合并结果到一个 MetricsCollector。
+
+        Args:
+            repeat: 每个 arm 的重复次数（默认 3）。
+
+        Returns:
+            包含双臂全部结果的 MetricsCollector。
+        """
+        collector = MetricsCollector()
+
+        for arm_name in ("routing_on", "routing_off"):
+            print(f"\n{'═' * 60}")
+            print(f"🔬 实验臂: {arm_name}")
+            print(f"{'═' * 60}")
+
+            # 构造单 arm 的 runner（共享同一 JSONL 文件）
+            runner = BenchmarkRunner(
+                tasks=self.tasks,
+                workspace_path=self.workspace_path,
+                output_dir=self.output_dir,
+                arm=arm_name,
+                repeat=repeat,
+            )
+            # 复用当前 runner 的 jsonl_path
+            runner._jsonl_path = self._jsonl_path
+            runner._lock = self._lock
+
+            arm_collector = runner.run_all()
+            for r in arm_collector.results:
+                collector.record(r)
 
         return collector
 
@@ -231,6 +321,18 @@ class BenchmarkRunner:
     def jsonl_path(self) -> str:
         """当前 JSONL 输出路径（供 __main__.py 报告生成使用）。"""
         return str(self._jsonl_path)
+
+    def _toggle_env_for_arm(self, arm: str) -> None:
+        """根据 arm 设置/清除环境变量。
+
+        Args:
+            arm: "routing_on" 或 "routing_off"。
+        """
+        if arm == "routing_off":
+            os.environ["DECISIONCODER_NO_ROUTING"] = "true"
+        else:
+            # routing_on: 清除环境变量（恢复纯 LLM 路由对照）
+            os.environ.pop("DECISIONCODER_NO_ROUTING", None)
 
     def _init_ui(self) -> object | None:
         """初始化 Rich 终端 UI。
@@ -281,7 +383,7 @@ class BenchmarkRunner:
         Args:
             result: BenchmarkResult。
         """
-        record = {
+        record: dict[str, Any] = {
             "task_id": result.task_id,
             "success": result.success,
             "completed": result.completed,
@@ -290,7 +392,14 @@ class BenchmarkRunner:
             "error": result.error,
             "output_keywords_found": result.output_keywords_found,
             "report_path": result.report_path,
+            "run_index": result.run_index,
+            "arm": result.arm,
         }
+        if result.token_usage is not None:
+            record["token_usage"] = result.token_usage
+        if result.numeric_value is not None:
+            record["numeric_value"] = result.numeric_value
+
         with self._lock:
             with open(self._jsonl_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
