@@ -234,6 +234,12 @@ def _run_rule_routing(query: str) -> tuple[dict | None, dict[str, float] | None]
         template_match_dict 包含 template_type (str) 和 confidence (float)。
         UNKNOWN 或异常时返回 (None, None)。
     """
+    # 实验对照开关：跳过规则路由，回退到纯 LLM 路由
+    # 必须在函数调用时实时读取 os.environ，不在模块 import 时缓存
+    if os.environ.get("DECISIONCODER_NO_ROUTING", "").lower() in ("true", "1", "yes"):
+        logger.info("[Coder] DECISIONCODER_NO_ROUTING 已启用，跳过规则路由")
+        return None, None
+
     try:
         from src.domain.template_matcher import match_template, TemplateType
         from src.domain.param_extractor import extract_params_for_template

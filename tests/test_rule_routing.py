@@ -228,6 +228,40 @@ def test_run_rule_routing_safety_stock():
     print(f"[单元级 SS] ✅ params={params}")
 
 
+def test_run_rule_routing_no_routing_env(monkeypatch):
+    """单元级：DECISIONCODER_NO_ROUTING=true 时应返回 (None, None)
+    且 template_matcher 未被调用。
+
+    验证：
+      - monkeypatch 设置环境变量后，_run_rule_routing 直接返回 None
+      - 对真实 EOQ 输入也不触发模板匹配和参数提取
+    """
+    from unittest.mock import patch
+
+    monkeypatch.setenv("DECISIONCODER_NO_ROUTING", "true")
+
+    # patch 源模块的 match_template：如果环境开关失效、代码走到了
+    # import + 调用路径，mock 会抛 AssertionError 而不会执行真实逻辑
+    with patch(
+        "src.domain.template_matcher.match_template",
+        side_effect=AssertionError("环境开关失效：match_template 不该被调用"),
+    ):
+        from src.agent.nodes.coder import _run_rule_routing
+
+        template_match, params = _run_rule_routing(
+            "年需求1000，订货成本50，持有成本2，帮我算EOQ"
+        )
+
+    assert template_match is None, (
+        "DECISIONCODER_NO_ROUTING=true 时 template_match 应为 None"
+    )
+    assert params is None, (
+        "DECISIONCODER_NO_ROUTING=true 时 params 应为 None"
+    )
+
+    print("[单元级 NO_ROUTING] ✅ 环境开关生效，跳过规则路由")
+
+
 # ======================================================================
 # 主入口
 # ======================================================================

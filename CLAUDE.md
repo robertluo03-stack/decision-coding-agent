@@ -180,6 +180,20 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 - **UI 组件**：新增面板在 `src/agent/ui/panels.py`，通过 `UIManager` 管理。面板只接收状态更新不修改状态。NodeTracer 通过函数包装器注入不修改节点文件。
 - **Benchmark 报告**：`ReportGenerator.generate_md/html()` 接受 `MetricsCollector`，零外部框架（内联 CSS），可从 Runner 或 JSONL 构建
 
+### 环境变量清单
+
+| 变量 | 用途 | 取值 |
+|------|------|------|
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥（必需） | 字符串 |
+| `WORKSPACE_PATH` | 工作区根目录 | 路径，默认 `./workspace` |
+| `USE_RICH` | 启用 Rich 终端 UI | `true` 启用 |
+| `USE_MCP` | Executor 走 MCP Client 路径 | `true` 启用 |
+| `USE_DOCKER` | Executor 走 Docker 容器路径 | `true` 启用 |
+| `USE_COMPOSE` | Executor 走 Docker Compose HTTP 沙箱路径 | `true` 启用 |
+| `SANDBOX_URL` | Compose 沙箱服务地址 | URL，如 `http://localhost:8080` |
+| `DECISIONCODER_NO_BROWSER` | 关闭图表自动浏览器打开 | `true` / `1` / `yes` |
+| `DECISIONCODER_NO_ROUTING` | 跳过规则路由，回退到纯 LLM 路由（实验对照） | `true` / `1` / `yes` |
+
 ## AI 写代码时的标准流程
 
 1. 读取本文件（CLAUDE.md）
