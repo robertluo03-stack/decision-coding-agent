@@ -48,11 +48,11 @@ class TestBenchmarkTasks:
                 assert t.id.startswith("CG-"), f"{t.id} should start with CG-"
 
     def test_all_tasks_have_expected_keywords(self) -> None:
-        """每个任务都有 3-5 个 expected_keywords。"""
+        """每个任务都有 2-5 个 expected_keywords（结果词）。"""
         tasks = get_default_tasks()
         for t in tasks:
-            assert 3 <= len(t.expected_keywords) <= 5, (
-                f"{t.id}: expected_keywords count={len(t.expected_keywords)} out of range"
+            assert 2 <= len(t.expected_keywords) <= 5, (
+                f"{t.id}: expected_keywords count={len(t.expected_keywords)} out of range (2-5)"
             )
 
     def test_all_timeouts_positive(self) -> None:

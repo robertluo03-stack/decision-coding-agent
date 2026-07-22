@@ -247,6 +247,7 @@ class BenchmarkRunner:
                     result.arm = self.arm
                     result.token_usage = token_usage
                     result.numeric_value = numeric_value
+                    result.needs_manual_review = task.needs_manual_review
 
                     collector.record(result)
 
@@ -259,15 +260,18 @@ class BenchmarkRunner:
                         ui_manager.log(
                             f"{status_icon} [{task.id}] {result.elapsed_seconds:.1f}s | "
                             f"重试 {result.retry_count} | token={token_usage.get('total_tokens', 0)} | "
-                            f"命中 {result.output_keywords_found}",
+                            f"结果命中 {result.output_keywords_found} | "
+                            f"机制[{','.join(result.template_keywords_found) or '—'}]",
                             level="info" if result.success else "error",
                         )
                     else:
                         verdict = "✅ 通过" if result.success else ("❌ 失败" if result.completed else "⏱ 超时")
+                        template_info = f" | 机制[{','.join(result.template_keywords_found) or '—'}]"
                         print(f"  {verdict} | 耗时 {result.elapsed_seconds:.1f}s | "
                               f"重试 {result.retry_count} | "
                               f"token={token_usage.get('total_tokens', 0)} | "
-                              f"关键词命中 {result.output_keywords_found}")
+                              f"结果词命中 {result.output_keywords_found}"
+                              f"{template_info}")
 
         finally:
             # ── 恢复 HITL 环境变量 ──
@@ -428,9 +432,11 @@ class BenchmarkRunner:
             "elapsed_seconds": result.elapsed_seconds,
             "error": result.error,
             "output_keywords_found": result.output_keywords_found,
+            "template_keywords_found": result.template_keywords_found,
             "report_path": result.report_path,
             "run_index": result.run_index,
             "arm": result.arm,
+            "needs_manual_review": result.needs_manual_review,
         }
         if result.token_usage is not None:
             record["token_usage"] = result.token_usage

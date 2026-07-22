@@ -184,6 +184,8 @@ def _cmd_run() -> None:
               f"{_pct(arm_bd.get('routing_off', {}).get('success_rate', 0)):>14}")
         print(f"  {'结果一致率':<20} {_pct(arm_bd.get('routing_on', {}).get('consistency_rate', 0)):>14} "
               f"{_pct(arm_bd.get('routing_off', {}).get('consistency_rate', 0)):>14}")
+        print(f"  {'模板命中率':<20} {_pct(arm_bd.get('routing_on', {}).get('template_hit_rate', 0)):>14} "
+              f"{_pct(arm_bd.get('routing_off', {}).get('template_hit_rate', 0)):>14}")
         print(f"  {'Token 总量':<20} {arm_bd.get('routing_on', {}).get('token_total', 0):>14} "
               f"{arm_bd.get('routing_off', {}).get('token_total', 0):>14}")
         print(f"  {'平均耗时':<20} {str(arm_bd.get('routing_on', {}).get('avg_elapsed_seconds', 0)) + 's':>14} "
@@ -223,11 +225,13 @@ def _cmd_report() -> None:
                 elapsed_seconds=record.get("elapsed_seconds", 0.0),
                 error=record.get("error"),
                 output_keywords_found=record.get("output_keywords_found", []),
+                template_keywords_found=record.get("template_keywords_found", []),
                 report_path=record.get("report_path"),
                 run_index=record.get("run_index", 1),
                 arm=record.get("arm", "routing_on"),
                 token_usage=record.get("token_usage"),
                 numeric_value=record.get("numeric_value"),
+                needs_manual_review=record.get("needs_manual_review", False),
             )
             collector.record(result)
 

@@ -76,8 +76,8 @@ class TestAdversarialTasks:
             assert t.query.strip(), f"{t.id} query 为空"
 
     def test_all_keywords_range_2_to_5(self) -> None:
-        """所有 expected_keywords 数量在 2-5 之间。"""
+        """所有 expected_keywords（结果词）数量在 1-5 之间。"""
         for t in get_adversarial_tasks():
-            assert 2 <= len(t.expected_keywords) <= 5, (
+            assert 1 <= len(t.expected_keywords) <= 5, (
                 f"{t.id} 关键词数量={len(t.expected_keywords)}"
             )

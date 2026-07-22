@@ -3,6 +3,14 @@
 get_default_tasks() — 返回 10 个基准任务（5 数据分析 + 5 代码生成）。
 get_adversarial_tasks() — 返回 7 个对抗任务（5 同任务多说法 + 2 模板外兜底）。
 所有数据文件相对于 workspace/data/ 目录。
+
+校验标准（实验前终审，2026-07-22）：
+- expected_keywords = 结果词：任何正确完成任务的系统都应产出
+  → 全部命中 ⇒ success。只放数值、领域术语、数据引用。
+- template_keywords = 机制词：只有本项目模板/函数才会产出
+  → 不计入 success，单独统计 template_hit_rate。
+- 边缘词（交付物措辞"报告""分析""图表"等）已全部移除，
+  不对应实质正确性。
 """
 
 from src.benchmark.models import BenchmarkTask
@@ -45,7 +53,8 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="BA-03",
             category="data_analysis",
             query="对 sales.csv 各区域销量画出柱状图，保存为 HTML 文件",
-            expected_keywords=["图表", "bar", "bar_chart", "html"],
+            expected_keywords=["bar", "html", "sales"],
+            template_keywords=["bar_chart"],
             data_files=["sales.csv"],
         )
     )
@@ -54,7 +63,7 @@ def get_default_tasks() -> list[BenchmarkTask]:
         BenchmarkTask(
             id="BA-04",
             category="data_analysis",
-            query="用 run_text_to_sql 查询 sales.csv，统计每个区域（region）的平均销量",
+            query="使用 run_text_to_sql 查询 sales.csv，统计每个区域（region）的平均销量",
             expected_keywords=["SELECT", "AVG", "region", "区域"],
             data_files=["sales.csv"],
         )
@@ -65,7 +74,9 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="BA-05",
             category="data_analysis",
             query="一键分析 inventory.csv 并生成完整报告",
-            expected_keywords=["分析", "inventory", "报告"],
+            # 局限：仅验证数据读取（列名出现），不验证分析计算深度。
+            # 实验后如有需要可替换为统计指标词（如"均值""标准差"）。
+            expected_keywords=["inventory", "sku", "warehouse"],
             data_files=["inventory.csv"],
         )
     )
@@ -77,7 +88,8 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="CG-01",
             category="code_generation",
             query="计算 EOQ：年需求 1000，订货成本 50，持有成本 2，打印结果",
-            expected_keywords=["EOQ", "223", "inventory_eoq"],
+            expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
         )
     )
 
@@ -86,7 +98,8 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="CG-02",
             category="code_generation",
             query="使用 demand_forecast 模板预测未来 3 期需求：history=[100, 120, 110, 130, 125, 140]",
-            expected_keywords=["预测", "MAPE", "forecasts"],
+            expected_keywords=["预测", "MAPE"],
+            template_keywords=["forecasts"],
         )
     )
 
@@ -104,7 +117,8 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="CG-04",
             category="code_generation",
             query="使用 reorder_point 模板计算补货点：avg_demand=100, lead_time=2, safety_stock=50",
-            expected_keywords=["补货点", "ROP", "reorder_point", "250"],
+            expected_keywords=["补货点", "ROP", "250"],
+            template_keywords=["reorder_point"],
         )
     )
 
@@ -113,7 +127,8 @@ def get_default_tasks() -> list[BenchmarkTask]:
             id="CG-05",
             category="code_generation",
             query="使用 inventory_pipeline 模板分析 sku_inventory.csv，订购成本 100，持有成本率 20%，单位成本 50，服务水平 95%，提前期 1",
-            expected_keywords=["pipeline", "报告", "图表", "EOQ"],
+            expected_keywords=["EOQ", "安全库存"],
+            template_keywords=["pipeline"],
             data_files=["sku_inventory.csv"],
         )
     )
@@ -140,6 +155,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             category="adversarial",
             query="年需求1000，订货成本50，持有成本2，帮我算EOQ",
             expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
             timeout=30,
         )
     )
@@ -150,6 +166,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             category="adversarial",
             query="每年要卖1000件，每次下单花50，存一年一件2块，最优订货量多少",
             expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
             timeout=30,
         )
     )
@@ -160,6 +177,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             category="adversarial",
             query="D=1000, S=50, H=2, 算一下经济订货批量",
             expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
             timeout=30,
         )
     )
@@ -170,6 +188,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             category="adversarial",
             query="帮我做个库存优化：年需求量一千，订货成本五十，单位持有成本二",
             expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
             timeout=30,
         )
     )
@@ -180,6 +199,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             category="adversarial",
             query="EOQ计算：annual_demand=1000, ordering_cost=50, holding_cost=2",
             expected_keywords=["EOQ", "223"],
+            template_keywords=["inventory_eoq"],
             timeout=30,
         )
     )
@@ -193,6 +213,7 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             query="写一个函数判断字符串是否为回文并测试",
             expected_keywords=["回文", "palindrome"],
             timeout=30,
+            needs_manual_review=True,
         )
     )
 
@@ -201,8 +222,9 @@ def get_adversarial_tasks() -> list[BenchmarkTask]:
             id="ADV-07",
             category="adversarial",
             query="产品原价100元，打8折后参加满300减50，买3件最终多少钱，写代码计算",
-            expected_keywords=["190", "最终"],
+            expected_keywords=["190"],
             timeout=30,
+            needs_manual_review=True,
         )
     )
 

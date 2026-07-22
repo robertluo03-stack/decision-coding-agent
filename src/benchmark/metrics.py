@@ -4,9 +4,10 @@
 所有指标保留 2 位小数。
 
 新增：
-- arm_breakdown：按 arm 分组统计
+- arm_breakdown：按 arm 分组统计，含 template_hit_rate
 - consistency_rate：数值结果一致率
 - token_total / token_prompt / token_completion：全局 token 汇总
+- template_hit_rate：机制词命中率（所有任务 template_keywords 的总命中比例）
 """
 
 from __future__ import annotations
@@ -68,6 +69,7 @@ class MetricsCollector:
                 "task_details": [],
                 "arm_breakdown": {},
                 "consistency_rate": 0.0,
+                "template_hit_rate": 0.0,
                 "token_total": 0,
                 "token_prompt": 0,
                 "token_completion": 0,
@@ -120,6 +122,9 @@ class MetricsCollector:
         # ── 全局一致率 ──
         consistency_rate = self._compute_consistency_rate(self.results)
 
+        # ── 全局 template_hit_rate ──
+        template_hit_rate = self._compute_template_hit_rate(self.results)
+
         # ── Token 汇总 ──
         token_total = 0
         token_prompt = 0
@@ -141,8 +146,10 @@ class MetricsCollector:
                 "elapsed_seconds": round(r.elapsed_seconds, 2),
                 "error": r.error,
                 "output_keywords_found": r.output_keywords_found,
+                "template_keywords_found": r.template_keywords_found,
                 "run_index": r.run_index,
                 "arm": r.arm,
+                "needs_manual_review": r.needs_manual_review,
             }
             if r.token_usage is not None:
                 detail["token_usage"] = r.token_usage
@@ -162,6 +169,7 @@ class MetricsCollector:
             "task_details": task_details,
             "arm_breakdown": arm_breakdown,
             "consistency_rate": consistency_rate,
+            "template_hit_rate": template_hit_rate,
             "token_total": token_total,
             "token_prompt": token_prompt,
             "token_completion": token_completion,
@@ -198,6 +206,7 @@ class MetricsCollector:
         retries = [r.retry_count for r in results]
         elapsed = [r.elapsed_seconds for r in results]
         consistency = self._compute_consistency_rate(results)
+        tpl_hit_rate = self._compute_template_hit_rate(results)
 
         token_total = 0
         token_prompt = 0
@@ -215,6 +224,7 @@ class MetricsCollector:
             "avg_retry_count": round(sum(retries) / total, 2),
             "avg_elapsed_seconds": round(sum(elapsed) / total, 2),
             "consistency_rate": consistency,
+            "template_hit_rate": tpl_hit_rate,
             "token_total": token_total,
             "token_prompt": token_prompt,
             "token_completion": token_completion,
@@ -267,3 +277,24 @@ class MetricsCollector:
         if total_pairs == 0:
             return 0.0
         return round(consistent_pairs / total_pairs, 2)
+
+    def _compute_template_hit_rate(self, results: list[BenchmarkResult]) -> float:
+        """计算机制词命中率（template_hit_rate）。
+
+        每个有机制词任务计 1 分（该结果中命中 ≥1 个机制词即得分），
+        除以总结果数。用于量化规则路由命中率。
+
+        Args:
+            results: 结果列表。
+
+        Returns:
+            0.0~1.0 的命中率。
+        """
+        if not results:
+            return 0.0
+
+        any_hit = sum(
+            1 for r in results
+            if len(getattr(r, "template_keywords_found", [])) > 0
+        )
+        return round(any_hit / len(results), 2)

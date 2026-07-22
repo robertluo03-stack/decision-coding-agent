@@ -6,6 +6,8 @@ ReportGenerator — 从 MetricsCollector 生成 Markdown + HTML 报告。
 - Arm 对比章节（仅在 arm_breakdown 存在时渲染）
 - Token 用量统计
 - 一致率指标
+- Template 命中率（template_hit_rate）—— 机制词命中比例
+- 人工复核标记（needs_manual_review）
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ class ReportGenerator:
                      f"completion={metrics.get('token_completion', 0)})  ")
         if metrics.get("consistency_rate", 0) > 0:
             lines.append(f"**数值结果一致率**: {_pct(metrics['consistency_rate'])}  ")
+        if metrics.get("template_hit_rate", 0) is not None:
+            lines.append(f"**模板命中率**: {_pct(metrics['template_hit_rate'])}  ")
         lines.append("")
 
         # ── Arm 对比（仅多 arm 时显示） ──
@@ -89,8 +93,8 @@ class ReportGenerator:
         # ── 任务明细 ──
         lines.append("## 任务明细")
         lines.append("")
-        lines.append("| ID | Arm | Run | 类别 | 状态 | 耗时 | 重试 | Token | 验证 |")
-        lines.append("|----|-----|-----|------|------|------|------|-------|------|")
+        lines.append("| ID | Arm | Run | 类别 | 状态 | 耗时 | 重试 | Token | 结果词 | 机制词 | 复核 |")
+        lines.append("|----|-----|-----|------|------|------|------|-------|--------|--------|------|")
         for detail in metrics["task_details"]:
             task_id = detail["task_id"]
             arm = detail.get("arm", "routing_on")
@@ -106,16 +110,20 @@ class ReportGenerator:
             retry = str(detail["retry_count"])
             token = str(detail.get("token_usage", {}).get("total_tokens", "-"))
             keywords_found = detail.get("output_keywords_found", [])
+            template_found = detail.get("template_keywords_found", [])
+            needs_review = detail.get("needs_manual_review", False)
             if detail["success"]:
-                verify = f"命中 {len(keywords_found)}"
+                verify = f"{len(keywords_found)} 词"
             elif detail.get("error"):
                 err = str(detail["error"])[:40]
                 verify = _escape_pipe(err)
             else:
-                verify = "未通过"
+                verify = _escape_pipe(f"缺{'、'.join(keywords_found) or '全部'}")
+            tpl_str = f"{len(template_found)} 词" if template_found else "—"
+            review_str = "⚠️ 是" if needs_review else ""
             lines.append(
                 f"| {task_id} | {arm} | {run_idx} | {category} | {status} | "
-                f"{elapsed} | {retry} | {token} | {verify} |"
+                f"{elapsed} | {retry} | {token} | {verify} | {tpl_str} | {review_str} |"
             )
         lines.append("")
 
@@ -126,16 +134,34 @@ class ReportGenerator:
         if failed:
             for d in failed:
                 err = d.get("error")
+                needs_review = d.get("needs_manual_review", False)
+                review_note = " ⚠️ 需人工复核" if needs_review else ""
                 if err:
-                    lines.append(f"- **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]: "
+                    lines.append(f"- **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]{review_note}: "
                                  f"{_escape_pipe(str(err)[:200])}")
                 else:
                     keywords_found = d.get("output_keywords_found", [])
-                    lines.append(f"- **{d['task_id']}**: 关键词未命中 "
-                                 f"— 缺失: {', '.join(keywords_found) if keywords_found else '未知'}")
+                    missing = [kw for kw in (d.get("expected_keywords") or []) if kw not in keywords_found]
+                    lines.append(f"- **{d['task_id']}**{review_note}: 结果词未命中 "
+                                 f"— 缺失: {', '.join(missing) if missing else '未知'}")
         else:
             lines.append("无失败任务。")
         lines.append("")
+
+        # ── 人工复核清单 ──
+        manual_review_tasks = [d for d in metrics["task_details"] if d.get("needs_manual_review")]
+        if manual_review_tasks:
+            lines.append("## 人工复核清单")
+            lines.append("")
+            lines.append("以下任务标记为 `needs_manual_review`，无论 success 状态均需人工复核：")
+            lines.append("")
+            for d in manual_review_tasks:
+                status = "✅" if d["success"] else ("⚠️" if d["completed"] else "❌")
+                lines.append(
+                    f"- {status} **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}] — "
+                    f"结果词: {d.get('output_keywords_found', [])}"
+                )
+            lines.append("")
 
         md_content = "\n".join(lines)
 
@@ -199,6 +225,8 @@ class ReportGenerator:
         parts.append(self._card("Token 总量", str(metrics.get("token_total", 0)), "#16a085"))
         if consistency_pct > 0:
             parts.append(self._card("结果一致率", f"{consistency_pct}%", "#e67e22"))
+        tpl_rate = round(metrics.get("template_hit_rate", 0) * 100)
+        parts.append(self._card("模板命中率", f"{tpl_rate}%", "#3498db"))
         parts.append("</div>")
 
         # ── 成功率进度条 ──
@@ -224,6 +252,7 @@ class ReportGenerator:
                 label = "规则路由 ON" if arm_name == "routing_on" else "规则路由 OFF"
                 arm_success = round(stats.get("success_rate", 0) * 100)
                 arm_consistency = round(stats.get("consistency_rate", 0) * 100)
+                arm_tpl = round(stats.get("template_hit_rate", 0) * 100)
                 color = "#27ae60" if arm_name == "routing_on" else "#e67e22"
                 parts.append(
                     f'<div class="card" style="border: 2px solid {color};">'
@@ -231,7 +260,7 @@ class ReportGenerator:
                     f'<div class="value" style="font-size: 20px; color: {color};">'
                     f"成功率 {arm_success}%</div>"
                     f'<div style="font-size: 13px; color: #7f8c8d; margin-top: 4px;">'
-                    f"一致率 {arm_consistency}%<br>"
+                    f"一致率 {arm_consistency}% | 模板命中 {arm_tpl}%<br>"
                     f"Token {stats.get('token_total', 0)}<br>"
                     f"平均耗时 {stats.get('avg_elapsed_seconds', 0)}s"
                     f"</div></div>"
@@ -267,7 +296,8 @@ class ReportGenerator:
         parts.append("<h2>任务明细</h2>")
         parts.append("<table>")
         parts.append("<thead><tr><th>ID</th><th>Arm</th><th>Run</th><th>类别</th>"
-                      "<th>状态</th><th>耗时</th><th>重试</th><th>Token</th><th>验证</th></tr></thead>")
+                      "<th>状态</th><th>耗时</th><th>重试</th><th>Token</th>"
+                      "<th>结果词</th><th>机制词</th><th>复核</th></tr></thead>")
         parts.append("<tbody>")
         for detail in metrics["task_details"]:
             task_id = detail["task_id"]
@@ -284,16 +314,20 @@ class ReportGenerator:
             retry = str(detail["retry_count"])
             token = str(detail.get("token_usage", {}).get("total_tokens", "-"))
             keywords_found = detail.get("output_keywords_found", [])
+            template_found = detail.get("template_keywords_found", [])
+            needs_review = detail.get("needs_manual_review", False)
             if detail["success"]:
-                verify = f"命中 {len(keywords_found)}"
+                verify = f"{len(keywords_found)} 词"
             elif detail.get("error"):
                 verify = str(detail["error"])[:60].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             else:
                 verify = "未通过"
+            tpl_str = f"{len(template_found)} 词" if template_found else "—"
+            review_str = "⚠️ 复核" if needs_review else ""
             parts.append(
                 f"<tr><td>{task_id}</td><td>{arm}</td><td>{run_idx}</td><td>{category}</td>"
                 f"<td>{status}</td><td>{elapsed}</td><td>{retry}</td>"
-                f"<td>{token}</td><td>{verify}</td></tr>"
+                f"<td>{token}</td><td>{verify}</td><td>{tpl_str}</td><td>{review_str}</td></tr>"
             )
         parts.append("</tbody></table>")
 
@@ -301,12 +335,14 @@ class ReportGenerator:
         parts.append("<h2>失败任务错误摘要</h2>")
         failed = [d for d in metrics["task_details"] if not d["success"]]
         if failed:
-            parts.append('<ul class="error-list">')
+            parts.append("<ul class=\"error-list\">")
             for d in failed:
                 err = d.get("error")
-                safe_err = str(err)[:200].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if err else "关键词未命中"
+                needs_review = d.get("needs_manual_review", False)
+                review_note = " ⚠️ 需人工复核" if needs_review else ""
+                safe_err = str(err)[:200].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if err else "结果词未命中"
                 parts.append(
-                    f"<li><strong>{d['task_id']}</strong> [{d.get('arm', '')} run={d.get('run_index', '')}]: {safe_err}</li>"
+                    f"<li><strong>{d['task_id']}</strong> [{d.get('arm', '')} run={d.get('run_index', '')}]{review_note}: {safe_err}</li>"
                 )
             parts.append("</ul>")
         else:
@@ -390,6 +426,8 @@ class ReportGenerator:
              _pct(off_stats.get("completion_rate", 0))),
             ("结果一致率", _pct(on_stats.get("consistency_rate", 0)),
              _pct(off_stats.get("consistency_rate", 0))),
+            ("模板命中率", _pct(on_stats.get("template_hit_rate", 0)),
+             _pct(off_stats.get("template_hit_rate", 0))),
             ("Average Tokens", str(on_stats.get("token_total", 0)),
              str(off_stats.get("token_total", 0))),
             ("Prompt Tokens", str(on_stats.get("token_prompt", 0)),

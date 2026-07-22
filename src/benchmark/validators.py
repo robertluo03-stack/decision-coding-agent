@@ -2,6 +2,12 @@
 
 validate_task_result(task, state, elapsed_seconds, workspace_path) → BenchmarkResult
 
+两套关键词独立校验：
+1. expected_keywords（结果词）：全部命中 ⇒ success
+   — 任何正确完成任务的系统都应产出：数值、领域术语、数据引用。
+2. template_keywords（机制词）：不计入 success，单独统计 template_hit_rate
+   — 只有本项目模板/函数才会产出：函数名、模块名、属性名。
+
 关键词匹配：不区分大小写，支持部分匹配（substring）。
 浮点数宽松匹配：预期 "223" 匹配 "223.61"。
 """
@@ -29,7 +35,8 @@ def validate_task_result(
         workspace_path: 工作区根路径（用于查找生成的报告/图表文件）。
 
     Returns:
-        BenchmarkResult（completed, success, retry_count, error, keywords_found, report_path）。
+        BenchmarkResult（completed, success, retry_count, error, keywords_found,
+        template_keywords_found, report_path, needs_manual_review）。
     """
     final_report = state.get("final_report", "")
     execution_result = state.get("execution_result", "")
@@ -41,17 +48,24 @@ def validate_task_result(
     # ── 合并所有输出文本用于关键词搜索 ──
     output_text = f"{execution_result} {final_report}".lower()
 
-    # ── 关键词匹配（区分大小写，部分匹配） ──
+    # ── 结果词匹配（expected_keywords） ──
     keywords_found: list[str] = []
     for kw in task.expected_keywords:
         found = _keyword_found(output_text, kw)
         if found:
             keywords_found.append(kw)
 
-    all_found = len(keywords_found) == len(task.expected_keywords)
+    all_result_found = len(keywords_found) == len(task.expected_keywords)
 
-    # ── success: completed 且所有关键词命中 ──
-    success = completed and all_found
+    # ── 机制词匹配（template_keywords）—— 不计入 success ──
+    template_found: list[str] = []
+    for kw in task.template_keywords:
+        found = _keyword_found(output_text, kw)
+        if found:
+            template_found.append(kw)
+
+    # ── success: completed 且所有结果词命中 ──
+    success = completed and all_result_found
 
     # ── 检查报告/图表文件 ──
     report_path = _find_generated_files(workspace_path, task)
@@ -64,7 +78,9 @@ def validate_task_result(
         elapsed_seconds=elapsed_seconds,
         error=str(error) if error else None,
         output_keywords_found=keywords_found,
+        template_keywords_found=template_found,
         report_path=report_path,
+        needs_manual_review=task.needs_manual_review,
     )
 
 
