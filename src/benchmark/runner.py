@@ -247,6 +247,7 @@ class BenchmarkRunner:
         Debugger 的 _safe_input 不阻塞等待人工输入。
         每个任务开始前重置 HITL 自动应答计数器。
         首次写入 JSONL 时清除旧文件；追加写入时不删除（如 --both 双臂复用）。
+        运行结束后恢复 DECISIONCODER_NO_ROUTING 环境变量。
 
         Args:
             use_ui: 是否启用 Rich 终端 UI（默认 False）。
@@ -259,6 +260,7 @@ class BenchmarkRunner:
         collector = MetricsCollector()
 
         # ── Arm 环境切换 ──
+        _prev_no_routing = os.environ.get("DECISIONCODER_NO_ROUTING")
         self._toggle_env_for_arm(self.arm)
 
         # ── HITL 自动应答（benchmark 无人值守） ──
@@ -383,6 +385,11 @@ class BenchmarkRunner:
         finally:
             # ── 恢复 HITL 环境变量 ──
             self._restore_hitl_auto()
+            # ── 恢复 DECISIONCODER_NO_ROUTING 环境变量 ──
+            if _prev_no_routing is not None:
+                os.environ["DECISIONCODER_NO_ROUTING"] = _prev_no_routing
+            else:
+                os.environ.pop("DECISIONCODER_NO_ROUTING", None)
             if ui_manager is not None:
                 ui_manager.stop()
 
