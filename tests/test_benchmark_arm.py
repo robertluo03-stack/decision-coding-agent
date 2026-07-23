@@ -169,7 +169,7 @@ class TestConsistencyRate:
         assert metrics["consistency_rate"] > 0.8
 
     def test_consistency_zero_when_no_numeric(self) -> None:
-        """无数值结果时一致率为 0。"""
+        """无数值结果时一致率为 None（不适用）。"""
         collector = MetricsCollector()
         for i in range(3):
             r = BenchmarkResult(
@@ -179,7 +179,7 @@ class TestConsistencyRate:
             collector.record(r)
 
         metrics = collector.compute()
-        assert metrics["consistency_rate"] == 0.0
+        assert metrics["consistency_rate"] is None
 
 
 class TestRunBoth:

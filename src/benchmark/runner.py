@@ -246,6 +246,7 @@ class BenchmarkRunner:
         自动设置 DECISIONCODER_HITL_AUTO="1,4"，确保无人值守时
         Debugger 的 _safe_input 不阻塞等待人工输入。
         每个任务开始前重置 HITL 自动应答计数器。
+        首次写入 JSONL 时清除旧文件；追加写入时不删除（如 --both 双臂复用）。
 
         Args:
             use_ui: 是否启用 Rich 终端 UI（默认 False）。
@@ -268,9 +269,18 @@ class BenchmarkRunner:
         if use_ui:
             ui_manager = self._init_ui()
 
-        # 清除 JSONL 文件（覆盖旧内容）
-        if self._jsonl_path.exists():
-            self._jsonl_path.unlink()
+        # 仅首次运行（JSONL 为空或不存在）时清空旧文件
+        _is_empty = (
+            not self._jsonl_path.exists()
+            or self._jsonl_path.stat().st_size == 0
+        )
+        if not _is_empty:
+            # 追加模式：保留已有内容
+            pass
+        else:
+            # 首次写入：清空旧文件
+            if self._jsonl_path.exists():
+                self._jsonl_path.unlink()
 
         try:
             run_counter = 0
@@ -411,6 +421,7 @@ class BenchmarkRunner:
         """双臂对照执行：routing_on → routing_off。
 
         顺序执行两个 arm，合并结果到一个 MetricsCollector。
+        两个 arm 共享同一个 batch_id、JSONL 文件和 artifact_base。
 
         Args:
             repeat: 每个 arm 的重复次数（默认 3）。
@@ -425,7 +436,7 @@ class BenchmarkRunner:
             print(f"🔬 实验臂: {arm_name}")
             print(f"{'═' * 60}")
 
-            # 构造单 arm 的 runner（共享同一 JSONL 文件）
+            # 构造单 arm 的 runner（复用 batch_id / JSONL / artifact_base）
             runner = BenchmarkRunner(
                 tasks=self.tasks,
                 workspace_path=self.workspace_path,
@@ -433,7 +444,12 @@ class BenchmarkRunner:
                 arm=arm_name,
                 repeat=repeat,
             )
-            # 复用当前 runner 的 jsonl_path
+            # 覆盖为当前 runner 的批号，确保两臂同批次
+            runner.batch_id = self.batch_id
+            runner._git_commit = self._git_commit
+            runner._git_dirty = self._git_dirty
+            runner._artifact_base = self._artifact_base
+            runner._manifest = self._manifest
             runner._jsonl_path = self._jsonl_path
             runner._lock = self._lock
 

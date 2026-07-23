@@ -182,8 +182,10 @@ def _cmd_run() -> None:
         print(f"  {'─' * 20} {'─' * 14} {'─' * 14}")
         print(f"  {'成功率':<20} {_pct(arm_bd.get('routing_on', {}).get('success_rate', 0)):>14} "
               f"{_pct(arm_bd.get('routing_off', {}).get('success_rate', 0)):>14}")
-        print(f"  {'结果一致率':<20} {_pct(arm_bd.get('routing_on', {}).get('consistency_rate', 0)):>14} "
-              f"{_pct(arm_bd.get('routing_off', {}).get('consistency_rate', 0)):>14}")
+        cr_on = arm_bd.get("routing_on", {}).get("consistency_rate")
+        cr_off = arm_bd.get("routing_off", {}).get("consistency_rate")
+        print(f"  {'结果一致率':<20} {_pct(cr_on):>14} "
+              f"{_pct(cr_off):>14}")
         print(f"  {'模板命中率':<20} {_pct(arm_bd.get('routing_on', {}).get('template_hit_rate', 0)):>14} "
               f"{_pct(arm_bd.get('routing_off', {}).get('template_hit_rate', 0)):>14}")
         print(f"  {'Token 总量':<20} {arm_bd.get('routing_on', {}).get('token_total', 0):>14} "
@@ -270,8 +272,10 @@ def _generate_reports(collector: object, source_path: str) -> None:
     print(f"🌐 HTML 报告: {html_path}")
 
 
-def _pct(rate: float) -> str:
-    """小数 → 百分数字符串。"""
+def _pct(rate: float | None) -> str:
+    """小数 → 百分数字符串。0.8 → "80%"，None → "N/A"。"""
+    if rate is None:
+        return "N/A"
     return f"{round(rate * 100)}%"
 
 

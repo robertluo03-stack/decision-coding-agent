@@ -54,7 +54,7 @@ class ReportGenerator:
         lines.append(f"**Token 总量**: {metrics.get('token_total', 0)} "
                      f"(prompt={metrics.get('token_prompt', 0)}, "
                      f"completion={metrics.get('token_completion', 0)})  ")
-        if metrics.get("consistency_rate", 0) > 0:
+        if metrics.get("consistency_rate") is not None:
             lines.append(f"**数值结果一致率**: {_pct(metrics['consistency_rate'])}  ")
         if metrics.get("template_hit_rate", 0) is not None:
             lines.append(f"**模板命中率**: {_pct(metrics['template_hit_rate'])}  ")
@@ -201,7 +201,7 @@ class ReportGenerator:
 
         success_pct = round(metrics["success_rate"] * 100)
         completion_pct = round(metrics["completion_rate"] * 100)
-        consistency_pct = round(metrics.get("consistency_rate", 0) * 100)
+        consistency_pct = round(metrics.get("consistency_rate") * 100) if metrics.get("consistency_rate") is not None else None
 
         parts: list[str] = []
         parts.append("<!DOCTYPE html>")
@@ -233,7 +233,7 @@ class ReportGenerator:
         parts.append(self._card("平均重试", str(metrics["avg_retry_count"]), "#8e44ad"))
         parts.append(self._card("平均耗时", f"{metrics['avg_elapsed_seconds']}s", "#2c3e50"))
         parts.append(self._card("Token 总量", str(metrics.get("token_total", 0)), "#16a085"))
-        if consistency_pct > 0:
+        if consistency_pct is not None and consistency_pct > 0:
             parts.append(self._card("结果一致率", f"{consistency_pct}%", "#e67e22"))
         tpl_rate = round(metrics.get("template_hit_rate", 0) * 100)
         parts.append(self._card("模板命中率", f"{tpl_rate}%", "#3498db"))
@@ -261,7 +261,8 @@ class ReportGenerator:
                     continue
                 label = "规则路由 ON" if arm_name == "routing_on" else "规则路由 OFF"
                 arm_success = round(stats.get("success_rate", 0) * 100)
-                arm_consistency = round(stats.get("consistency_rate", 0) * 100)
+                arm_consistency_val = stats.get("consistency_rate")
+                arm_consistency = round(arm_consistency_val * 100) if arm_consistency_val is not None else None
                 arm_tpl = round(stats.get("template_hit_rate", 0) * 100)
                 color = "#27ae60" if arm_name == "routing_on" else "#e67e22"
                 parts.append(
@@ -270,7 +271,7 @@ class ReportGenerator:
                     f'<div class="value" style="font-size: 20px; color: {color};">'
                     f"成功率 {arm_success}%</div>"
                     f'<div style="font-size: 13px; color: #7f8c8d; margin-top: 4px;">'
-                    f"一致率 {arm_consistency}% | 模板命中 {arm_tpl}%<br>"
+                    f"一致率 {arm_consistency if arm_consistency is not None else 'N/A'} | 模板命中 {arm_tpl}%<br>"
                     f"Token {stats.get('token_total', 0)}<br>"
                     f"平均耗时 {stats.get('avg_elapsed_seconds', 0)}s"
                     f"</div></div>"
@@ -439,8 +440,8 @@ class ReportGenerator:
              _pct(off_stats.get("success_rate", 0))),
             ("完成率", _pct(on_stats.get("completion_rate", 0)),
              _pct(off_stats.get("completion_rate", 0))),
-            ("结果一致率", _pct(on_stats.get("consistency_rate", 0)),
-             _pct(off_stats.get("consistency_rate", 0))),
+            ("结果一致率", _pct(on_stats.get("consistency_rate")),
+             _pct(off_stats.get("consistency_rate"))),
             ("模板命中率", _pct(on_stats.get("template_hit_rate", 0)),
              _pct(off_stats.get("template_hit_rate", 0))),
             ("Average Tokens", str(on_stats.get("token_total", 0)),
@@ -456,15 +457,17 @@ class ReportGenerator:
         ]
 
 
-def _pct(rate: float) -> str:
-    """小数 → 百分数字符串。0.8 → "80%"
+def _pct(rate: float | None) -> str:
+    """小数 → 百分数字符串。0.8 → "80%"，None → "N/A"
 
     Args:
-        rate: 0-1 之间的小数。
+        rate: 0-1 之间的小数，或 None。
 
     Returns:
         百分数字符串。
     """
+    if rate is None:
+        return "N/A"
     return f"{round(rate * 100)}%"
 
 

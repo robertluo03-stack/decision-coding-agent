@@ -70,7 +70,7 @@ class MetricsCollector:
                 "category_breakdown": {},
                 "task_details": [],
                 "arm_breakdown": {},
-                "consistency_rate": 0.0,
+                "consistency_rate": None,
                 "template_hit_rate": 0.0,
                 "token_total": 0,
                 "token_prompt": 0,
@@ -174,7 +174,7 @@ class MetricsCollector:
             "category_breakdown": category_breakdown,
             "task_details": task_details,
             "arm_breakdown": arm_breakdown,
-            "consistency_rate": consistency_rate,
+            "consistency_rate": consistency_rate if consistency_rate is not None else None,
             "template_hit_rate": template_hit_rate,
             "token_total": token_total,
             "token_prompt": token_prompt,
@@ -201,7 +201,7 @@ class MetricsCollector:
                 "completion_rate": 0.0,
                 "avg_retry_count": 0.0,
                 "avg_elapsed_seconds": 0.0,
-                "consistency_rate": 0.0,
+                "consistency_rate": None,
                 "token_total": 0,
                 "token_prompt": 0,
                 "token_completion": 0,
@@ -236,16 +236,17 @@ class MetricsCollector:
             "token_completion": token_completion,
         }
 
-    def _compute_consistency_rate(self, results: list[BenchmarkResult]) -> float:
+    def _compute_consistency_rate(self, results: list[BenchmarkResult]) -> float | None:
         """计算数值结果一致率。
 
         按 (task_id, arm) 分组，每组内有效数值偏差在 ±5% 内的比例。
+        若无任何分组有 ≥2 个有效数值（如 repeat=1），返回 None 表示不适用。
 
         Args:
             results: 结果列表。
 
         Returns:
-            0.0~1.0 的一致率。
+            0.0~1.0 的一致率，或 None（数据不足以计算时）。
         """
         from collections import defaultdict
 
@@ -258,14 +259,16 @@ class MetricsCollector:
                 groups[key].append(nv)
 
         if not groups:
-            return 0.0
+            return None
 
         total_pairs = 0
         consistent_pairs = 0
+        any_usable_group = False
 
         for values in groups.values():
             if len(values) < 2:
                 continue
+            any_usable_group = True
             # 排序取中位数作为参考
             sorted_vals = sorted(values)
             median_idx = len(sorted_vals) // 2
@@ -280,8 +283,11 @@ class MetricsCollector:
                     if deviation <= 0.05:
                         consistent_pairs += 1
 
+        if not any_usable_group:
+            return None
+
         if total_pairs == 0:
-            return 0.0
+            return None
         return round(consistent_pairs / total_pairs, 2)
 
     def _compute_template_hit_rate(self, results: list[BenchmarkResult]) -> float:

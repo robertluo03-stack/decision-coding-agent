@@ -622,3 +622,126 @@ class TestArtifactArchive:
             assert "metrics_summary" in manifest
             assert len(manifest["tasks"]) == 1
             assert manifest["tasks"][0]["id"] == "CG-01"
+
+
+# ── 批次共享与一致性测试 ──
+
+
+class TestBatchIdSharing:
+    """batch_id 共享与 JSONL 追加模式测试。"""
+
+    def test_run_both_shares_batch_id(self) -> None:
+        """--both 双臂共享同一 batch_id、同一 JSONL、同一 artifact_base。"""
+        mock_state = {
+            "execution_result": "EOQ = 223.61",
+            "final_report": "报告内容",
+            "error": None,
+            "retry_count": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = BenchmarkTask(
+                id="CG-01", category="code_generation",
+                query="计算 EOQ", expected_keywords=["EOQ"], timeout=5,
+            )
+            runner = BenchmarkRunner([task], workspace_path=tmpdir, output_dir=tmpdir)
+            with patch("src.agent.graph.run", return_value=mock_state):
+                runner.run_both(repeat=1)
+
+            # 验证只用了一个 JSONL
+            jsonl_files = sorted(Path(tmpdir).glob("benchmark_*.jsonl"))
+            assert len(jsonl_files) == 1
+
+            # 验证一个 JSONL 包含两条记录（两臂各一）
+            with open(jsonl_files[0], encoding="utf-8") as f:
+                records = [json.loads(line) for line in f if line.strip()]
+            assert len(records) == 2
+            arms = sorted(r["arm"] for r in records)
+            assert arms == ["routing_off", "routing_on"]
+
+            # 验证只有一个 artifact 批次目录
+            artifact_dirs = sorted(Path(tmpdir).glob("artifacts/*"))
+            assert len(artifact_dirs) == 1
+
+    def test_run_both_jsonl_not_deleted_between_arms(self) -> None:
+        """第二个 arm 的 run_all 不会删除第一个 arm 的 JSONL 记录。"""
+        mock_state = {
+            "execution_result": "EOQ = 223.61",
+            "final_report": "报告内容",
+            "error": None,
+            "retry_count": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tasks = [
+                BenchmarkTask(
+                    id="CG-01", category="code_generation",
+                    query="计算 EOQ", expected_keywords=["EOQ"], timeout=5,
+                ),
+                BenchmarkTask(
+                    id="CG-02", category="code_generation",
+                    query="预测需求", expected_keywords=["预测"], timeout=5,
+                ),
+            ]
+            runner = BenchmarkRunner(tasks, workspace_path=tmpdir, output_dir=tmpdir)
+            with patch("src.agent.graph.run", return_value=mock_state):
+                runner.run_both(repeat=1)
+
+            # 应该有 4 条记录（2 tasks × 2 arms）
+            jsonl_files = sorted(Path(tmpdir).glob("benchmark_*.jsonl"))
+            assert len(jsonl_files) == 1
+            with open(jsonl_files[0], encoding="utf-8") as f:
+                records = [json.loads(line) for line in f if line.strip()]
+            assert len(records) == 4
+
+
+class TestConsistencyRate:
+    """consistency_rate 显示测试。"""
+
+    def test_consistency_none_when_repeat_one(self) -> None:
+        """repeat=1 时 consistency_rate 为 None（不适用）。"""
+        mc = MetricsCollector()
+        r1 = BenchmarkResult(
+            task_id="CG-01", success=True, completed=True,
+            elapsed_seconds=5.0, numeric_value=223.61, arm="routing_on",
+        )
+        r2 = BenchmarkResult(
+            task_id="CG-01", success=True, completed=True,
+            elapsed_seconds=6.0, numeric_value=223.61, arm="routing_off",
+        )
+        mc.record(r1)
+        mc.record(r2)
+        metrics = mc.compute()
+        # 每组只有 1 个值 → 不足以计算一致率
+        assert metrics["consistency_rate"] is None
+
+    def test_consistency_computed_when_repeat_two(self) -> None:
+        """repeat=2 时同一组有 2 个值 → 可计算一致率。"""
+        mc = MetricsCollector()
+        r1 = BenchmarkResult(
+            task_id="CG-01", success=True, completed=True,
+            elapsed_seconds=5.0, numeric_value=223.61, arm="routing_on", run_index=1,
+        )
+        r2 = BenchmarkResult(
+            task_id="CG-01", success=True, completed=True,
+            elapsed_seconds=6.0, numeric_value=223.61, arm="routing_on", run_index=2,
+        )
+        mc.record(r1)
+        mc.record(r2)
+        metrics = mc.compute()
+        assert metrics["consistency_rate"] is not None
+        assert metrics["consistency_rate"] == 1.0  # same value
+
+    def test_consistency_zero_when_no_numeric_values(self) -> None:
+        """无任何 numeric_value 时 consistency_rate 为 None。"""
+        mc = MetricsCollector()
+        r1 = BenchmarkResult(
+            task_id="BA-01", success=True, completed=True,
+            elapsed_seconds=3.0, numeric_value=None, arm="routing_on", run_index=1,
+        )
+        r2 = BenchmarkResult(
+            task_id="BA-01", success=True, completed=True,
+            elapsed_seconds=4.0, numeric_value=None, arm="routing_on", run_index=2,
+        )
+        mc.record(r1)
+        mc.record(r2)
+        metrics = mc.compute()
+        assert metrics["consistency_rate"] is None
