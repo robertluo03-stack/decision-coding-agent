@@ -18,9 +18,9 @@
 ## CSV 列名约束（重要）
 
 读取 CSV 后，必须先用 `df.columns` 或 `df.head(3)` 查看实际列名，再编写后续代码。
-- 不要使用假设的列名如 'SKU'、'销量'、'数量'。
-- 必须使用文件中的实际列名（如 'sku'、'qty'）。
-- 如果用户提到 'sku'，使用实际列名进行分组；如果提到 '销量' 或 '数量'，使用 'qty' 列。
+- 不要假设列名（如根据用户描述直接猜测列名）。
+- 必须使用文件中的实际列名（通过 `df.columns` 获取后选择匹配的列）。
+- 如果用户提到的业务概念与实际列名不一致，以实际列名为准进行映射。
 
 ## 数据质量检查模板（重要）
 
@@ -79,9 +79,9 @@ from src.domain.chart_templates import bar_chart, line_chart, histogram_chart, s
 # 读取数据
 df = pd.read_csv("data/<文件名>.csv")
 
-# 生成图表（示例：月度销量趋势折线图）
-line_chart(df, x_col='日期', y_col='销量', title='月度销量趋势', output_path='reports/charts/monthly_sales.html')
-print("图表已保存到 reports/charts/monthly_sales.html")
+# 生成图表（示例：时间序列折线图）
+line_chart(df, x_col='<日期列>', y_col='<数值列>', title='<图表标题>', output_path='reports/charts/<文件名>.html')
+print("图表已保存到 reports/charts/<文件名>.html")
 ```
 
 ### 规则
@@ -170,9 +170,9 @@ print(f"分析报告已生成: {report_path}")
 | "分析 sales.csv" | `run_analysis` |
 | "帮我做个库存报表" | `run_analysis` |
 | "探索一下 data/demo.csv" | `run_analysis` |
-| "检查 sales.csv 的缺失值" | `run_quality_check`（单一场景） |
-| "画出各区域销量对比图" | `chart_templates`（单一场景） |
-| "查询华北地区总销量" | `run_text_to_sql`（单一场景） |
+| "检查数据的缺失值" | `run_quality_check`（单一场景） |
+| "画出对比图" | `chart_templates`（单一场景） |
+| "查询统计数据" | `run_text_to_sql`（单一场景） |
 
 ## 供应链库存优化模板（最高精度场景）
 
@@ -319,8 +319,8 @@ print(rop.suggestion)
 | "预测未来 3 个月的需求量" | `demand_forecast` | 供应链优化场景 |
 | "安全库存设为 95% 服务水平" | `safety_stock` | 供应链优化场景 |
 | "库存降到 200 时补货" | `reorder_point` | 供应链优化场景 |
-| "画出各产品销量趋势" | `chart_templates` | 单一图表场景 |
-| "查询各区域库存总量" | `run_text_to_sql` | SQL 查询场景 |
+| "画出趋势图" | `chart_templates` | 单一图表场景 |
+| "查询统计数据" | `run_text_to_sql` | SQL 查询场景 |
 
 
 
