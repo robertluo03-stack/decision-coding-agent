@@ -36,11 +36,23 @@ def validate_task_result(
 
     Returns:
         BenchmarkResult（completed, success, retry_count, error, keywords_found,
-        template_keywords_found, report_path, needs_manual_review）。
+        template_keywords_found, report_path, needs_manual_review, aborted）。
     """
     final_report = state.get("final_report", "")
     execution_result = state.get("execution_result", "")
     error = state.get("error")
+    human_feedback = state.get("human_feedback", "")
+
+    # ── ABORT 判定（从 graph 最终状态，不靠文本猜测） ──
+    is_aborted = human_feedback == "ABORT"
+
+    # ── 失败报告路径检测（兜底：即使 human_feedback 未透传） ──
+    ws = Path(workspace_path)
+    reports_dir = ws / "reports"
+    if reports_dir.exists():
+        fail_files = list(reports_dir.glob("fail_*.md"))
+        if fail_files:
+            is_aborted = True
 
     # ── completed: 有 final_report 或无错误的 execution_result ──
     completed = bool(final_report) or bool(execution_result)
@@ -64,8 +76,8 @@ def validate_task_result(
         if found:
             template_found.append(kw)
 
-    # ── success: completed 且所有结果词命中 ──
-    success = completed and all_result_found
+    # ── success: completed + 所有结果词命中 + 非 ABORT（失败否决） ──
+    success = completed and all_result_found and not is_aborted
 
     # ── 检查报告/图表文件 ──
     report_path = _find_generated_files(workspace_path, task)
@@ -74,6 +86,7 @@ def validate_task_result(
         task_id=task.id,
         success=success,
         completed=completed,
+        aborted=is_aborted,
         retry_count=state.get("retry_count", 0),
         elapsed_seconds=elapsed_seconds,
         error=str(error) if error else None,

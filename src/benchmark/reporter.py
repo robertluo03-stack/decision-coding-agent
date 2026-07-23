@@ -47,6 +47,8 @@ class ReportGenerator:
         lines.append(f"**结果总数**: {metrics['total']}  ")
         lines.append(f"**完成率**: {_pct(metrics['completion_rate'])} ({metrics['completed']}/{metrics['total']})  ")
         lines.append(f"**成功率**: {_pct(metrics['success_rate'])} ({metrics['succeeded']}/{metrics['total']})  ")
+        if metrics.get("aborted", 0) > 0:
+            lines.append(f"**中止数**: {metrics['aborted']}  ")
         lines.append(f"**平均重试次数**: {metrics['avg_retry_count']}  ")
         lines.append(f"**平均耗时**: {metrics['avg_elapsed_seconds']}s  ")
         lines.append(f"**Token 总量**: {metrics.get('token_total', 0)} "
@@ -93,8 +95,8 @@ class ReportGenerator:
         # ── 任务明细 ──
         lines.append("## 任务明细")
         lines.append("")
-        lines.append("| ID | Arm | Run | 类别 | 状态 | 耗时 | 重试 | Token | 结果词 | 机制词 | 复核 |")
-        lines.append("|----|-----|-----|------|------|------|------|-------|--------|--------|------|")
+        lines.append("| ID | Arm | Run | 类别 | 状态 | 耗时 | 重试 | Token | 结果词 | 机制词 | 中止 | 复核 |")
+        lines.append("|----|-----|-----|------|------|------|------|-------|--------|--------|------|------|")
         for detail in metrics["task_details"]:
             task_id = detail["task_id"]
             arm = detail.get("arm", "routing_on")
@@ -112,6 +114,7 @@ class ReportGenerator:
             keywords_found = detail.get("output_keywords_found", [])
             template_found = detail.get("template_keywords_found", [])
             needs_review = detail.get("needs_manual_review", False)
+            aborted = "🛑" if detail.get("aborted") else ""
             if detail["success"]:
                 verify = f"{len(keywords_found)} 词"
             elif detail.get("error"):
@@ -123,7 +126,7 @@ class ReportGenerator:
             review_str = "⚠️ 是" if needs_review else ""
             lines.append(
                 f"| {task_id} | {arm} | {run_idx} | {category} | {status} | "
-                f"{elapsed} | {retry} | {token} | {verify} | {tpl_str} | {review_str} |"
+                f"{elapsed} | {retry} | {token} | {verify} | {tpl_str} | {aborted} | {review_str} |"
             )
         lines.append("")
 
@@ -135,15 +138,17 @@ class ReportGenerator:
             for d in failed:
                 err = d.get("error")
                 needs_review = d.get("needs_manual_review", False)
+                aborted_mark = " 🛑已中止" if d.get("aborted") else ""
                 review_note = " ⚠️ 需人工复核" if needs_review else ""
+                archive_path = d.get("archive_path")
+                archive_note = f" [归档: {archive_path}]" if archive_path else ""
                 if err:
-                    lines.append(f"- **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]{review_note}: "
-                                 f"{_escape_pipe(str(err)[:200])}")
+                    lines.append(f"- **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]{aborted_mark}{review_note}: "
+                                 f"{_escape_pipe(str(err)[:200])}{archive_note}")
                 else:
                     keywords_found = d.get("output_keywords_found", [])
-                    missing = [kw for kw in (d.get("expected_keywords") or []) if kw not in keywords_found]
-                    lines.append(f"- **{d['task_id']}**{review_note}: 结果词未命中 "
-                                 f"— 缺失: {', '.join(missing) if missing else '未知'}")
+                    lines.append(f"- **{d['task_id']}**{review_note}{aborted_mark}: 结果词未命中 "
+                                 f"({'、'.join(keywords_found) or '全部'}) — 缺失{archive_note}")
         else:
             lines.append("无失败任务。")
         lines.append("")
@@ -157,9 +162,12 @@ class ReportGenerator:
             lines.append("")
             for d in manual_review_tasks:
                 status = "✅" if d["success"] else ("⚠️" if d["completed"] else "❌")
+                aborted_mark = " 🛑已中止" if d.get("aborted") else ""
+                archive_path = d.get("archive_path")
+                archive_note = f" [归档: {archive_path}]" if archive_path else ""
                 lines.append(
-                    f"- {status} **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}] — "
-                    f"结果词: {d.get('output_keywords_found', [])}"
+                    f"- {status} **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]{aborted_mark} — "
+                    f"结果词: {d.get('output_keywords_found', [])}{archive_note}"
                 )
             lines.append("")
 
@@ -220,6 +228,8 @@ class ReportGenerator:
                                 "#27ae60" if completion_pct >= 80 else "#e67e22"))
         parts.append(self._card("成功率", f"{success_pct}%",
                                 "#27ae60" if success_pct >= 80 else "#e74c3c"))
+        if metrics.get("aborted", 0) > 0:
+            parts.append(self._card("中止数", str(metrics["aborted"]), "#e74c3c"))
         parts.append(self._card("平均重试", str(metrics["avg_retry_count"]), "#8e44ad"))
         parts.append(self._card("平均耗时", f"{metrics['avg_elapsed_seconds']}s", "#2c3e50"))
         parts.append(self._card("Token 总量", str(metrics.get("token_total", 0)), "#16a085"))
@@ -297,7 +307,7 @@ class ReportGenerator:
         parts.append("<table>")
         parts.append("<thead><tr><th>ID</th><th>Arm</th><th>Run</th><th>类别</th>"
                       "<th>状态</th><th>耗时</th><th>重试</th><th>Token</th>"
-                      "<th>结果词</th><th>机制词</th><th>复核</th></tr></thead>")
+                      "<th>结果词</th><th>机制词</th><th>中止</th><th>复核</th></tr></thead>")
         parts.append("<tbody>")
         for detail in metrics["task_details"]:
             task_id = detail["task_id"]
@@ -316,6 +326,7 @@ class ReportGenerator:
             keywords_found = detail.get("output_keywords_found", [])
             template_found = detail.get("template_keywords_found", [])
             needs_review = detail.get("needs_manual_review", False)
+            aborted_flag = detail.get("aborted", False)
             if detail["success"]:
                 verify = f"{len(keywords_found)} 词"
             elif detail.get("error"):
@@ -323,11 +334,12 @@ class ReportGenerator:
             else:
                 verify = "未通过"
             tpl_str = f"{len(template_found)} 词" if template_found else "—"
+            abort_str = "🛑" if aborted_flag else ""
             review_str = "⚠️ 复核" if needs_review else ""
             parts.append(
                 f"<tr><td>{task_id}</td><td>{arm}</td><td>{run_idx}</td><td>{category}</td>"
                 f"<td>{status}</td><td>{elapsed}</td><td>{retry}</td>"
-                f"<td>{token}</td><td>{verify}</td><td>{tpl_str}</td><td>{review_str}</td></tr>"
+                f"<td>{token}</td><td>{verify}</td><td>{tpl_str}</td><td>{abort_str}</td><td>{review_str}</td></tr>"
             )
         parts.append("</tbody></table>")
 
@@ -340,9 +352,12 @@ class ReportGenerator:
                 err = d.get("error")
                 needs_review = d.get("needs_manual_review", False)
                 review_note = " ⚠️ 需人工复核" if needs_review else ""
+                aborted_mark = " 🛑已中止" if d.get("aborted") else ""
+                archive_path = d.get("archive_path")
+                archive_note = f" [归档: {archive_path}]" if archive_path else ""
                 safe_err = str(err)[:200].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if err else "结果词未命中"
                 parts.append(
-                    f"<li><strong>{d['task_id']}</strong> [{d.get('arm', '')} run={d.get('run_index', '')}]{review_note}: {safe_err}</li>"
+                    f"<li><strong>{d['task_id']}</strong> [{d.get('arm', '')} run={d.get('run_index', '')}]{aborted_mark}{review_note}: {safe_err}{archive_note}</li>"
                 )
             parts.append("</ul>")
         else:

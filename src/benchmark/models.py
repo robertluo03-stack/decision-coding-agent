@@ -46,6 +46,7 @@ class BenchmarkResult:
         task_id: 对应 BenchmarkTask.id。
         success: 是否所有 expected_keywords（结果词）都在输出中出现。
         completed: 是否正常完成（无 LLM 调用失败 / timeout）。
+        aborted: 是否以 ABORT 结束（human_feedback=="ABORT" 或产出 fail_*.md）。
         retry_count: Debugger 重试次数。
         elapsed_seconds: 总执行耗时。
         error: 错误信息（None 表示无错误）。
@@ -57,11 +58,13 @@ class BenchmarkResult:
         token_usage: Token 用量 {prompt_tokens, completion_tokens, total_tokens}。
         numeric_value: 从执行结果中提取的核心数值（None 表示无）。
         needs_manual_review: 标记需要人工复核。
+        archive_path: 归档目录路径（None 表示未归档）。
     """
 
     task_id: str
     success: bool = False
     completed: bool = False
+    aborted: bool = False
     retry_count: int = 0
     elapsed_seconds: float = 0.0
     error: str | None = None
@@ -73,3 +76,4 @@ class BenchmarkResult:
     token_usage: dict | None = None
     numeric_value: float | None = None
     needs_manual_review: bool = False
+    archive_path: str | None = None

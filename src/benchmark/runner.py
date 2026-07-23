@@ -9,12 +9,20 @@ BenchmarkRunner — 遍历任务集，逐个执行 graph.run()，收集结果写
 - token 用量追踪（token_tracker）
 - 数值结果提取（numeric_extractor）
 - run_both() 双臂对照执行
+
+新增（证据保留 + 失败否决）：
+- batch_id: <时间戳>_<git短哈希>，会话级别
+- git_commit / git_dirty 记录在 JSONL 和 manifest.json 中
+- archive_artifacts: 清理前复制报告和图表到 results/artifacts/
+- 失败否决: ABORT/fail_*.md → success=False
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -75,10 +83,82 @@ class BenchmarkRunner:
         # 确保输出目录存在
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
-        # JSONL 输出路径（每次 run_all() 生成新文件）
+        # ── 批次标识：时间戳 + git 短哈希 ──
+        self._git_commit = self._get_git_commit()
+        self._git_dirty = self._check_git_dirty()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._jsonl_path = Path(self.output_dir) / f"benchmark_{timestamp}.jsonl"
+        git_short = self._git_commit[:7] if self._git_commit else "nogit"
+        self.batch_id: str = f"{timestamp}_{git_short}"
+
+        # ── 脏工作区警告 ──
+        if self._git_dirty:
+            print(
+                "⚠️ [Benchmark] 工作区存在未提交修改（git status --porcelain 非空），"
+                "正式实验前建议先提交！"
+            )
+
+        # ── 归档目录：results/artifacts/<batch_id>/ ──
+        self._artifact_base = (
+            Path(self.output_dir) / "artifacts" / self.batch_id
+        )
+        # Manifest 累计（在 run_all 结束时写入）
+        self._manifest: dict[str, Any] = {
+            "batch_id": self.batch_id,
+            "git_commit": self._git_commit,
+            "git_dirty": self._git_dirty,
+            "cli_args": {},
+            "tasks": [],
+            "arm_config": {},
+            "generated_at": datetime.now().isoformat(),
+        }
+
+        # JSONL 输出路径（每次 run_all() 生成新文件）
+        self._jsonl_path = Path(self.output_dir) / f"benchmark_{self.batch_id}.jsonl"
         self._lock = threading.Lock()
+
+    # ── Git 信息获取 ────────────────────────────────────────
+
+    @staticmethod
+    def _get_git_commit() -> str:
+        """获取当前 HEAD 的完整 commit hash。
+
+        调用 `git rev-parse HEAD`，失败返回空字符串。
+
+        Returns:
+            40 位 SHA-1 哈希字符串，或空字符串。
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            pass
+        return ""
+
+    @staticmethod
+    def _check_git_dirty() -> bool:
+        """检查工作区是否有未提交的修改。
+
+        Returns:
+            True 表示有未暂存或未跟踪文件（git status --porcelain 非空）。
+        """
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return len(result.stdout.strip()) > 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            pass
+        return False
 
     # ── 公开接口 ──────────────────────────────────────────
 
@@ -195,6 +275,19 @@ class BenchmarkRunner:
         try:
             run_counter = 0
 
+            # ── 构建 manifest 任务清单 ──
+            for task in self.tasks:
+                self._manifest["tasks"].append({
+                    "id": task.id,
+                    "category": task.category,
+                    "query": task.query,
+                    "timeout": task.timeout,
+                })
+            self._manifest["arm_config"] = {
+                "arm": self.arm,
+                "repeat": self.repeat,
+            }
+
             for run_i in range(1, self.repeat + 1):
                 for task_i, task in enumerate(self.tasks):
                     run_counter += 1
@@ -249,6 +342,10 @@ class BenchmarkRunner:
                     result.numeric_value = numeric_value
                     result.needs_manual_review = task.needs_manual_review
 
+                    # ── 归档报告与图表（清理前保存） ──
+                    archive_path = self._archive_artifacts(task, run_i)
+                    result.archive_path = archive_path
+
                     collector.record(result)
 
                     # ── 写入 JSONL ──
@@ -281,6 +378,21 @@ class BenchmarkRunner:
 
         # ── 最终汇总 ──
         metrics = collector.compute()
+
+        # ── 写入 manifest.json ──
+        self._manifest["generated_at"] = datetime.now().isoformat()
+        self._manifest["metrics_summary"] = {
+            "total": metrics["total"],
+            "completion_rate": metrics["completion_rate"],
+            "success_rate": metrics["success_rate"],
+            "avg_retry_count": metrics["avg_retry_count"],
+            "avg_elapsed_seconds": metrics["avg_elapsed_seconds"],
+            "token_total": metrics.get("token_total", 0),
+        }
+        manifest_path = self._artifact_base / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(self._manifest, f, ensure_ascii=False, indent=2)
         if not use_ui:
             print(f"\n{'═' * 50}")
             print(f"Benchmark 完成：arm={self.arm} | {metrics['total']} 个结果")
@@ -412,11 +524,73 @@ class BenchmarkRunner:
         # 清理旧报告
         reports_dir = ws / "reports"
         if reports_dir.exists():
-            import shutil
             try:
                 shutil.rmtree(reports_dir)
             except OSError:
                 pass
+
+    def _archive_artifacts(
+        self, task: BenchmarkTask, run_index: int
+    ) -> str | None:
+        """清理前将报告与图表归档到 results/artifacts/<batch_id>/<task_id>/<arm>/run<N>/。
+
+        归档内容：
+        - workspace/reports/report_*.md
+        - workspace/reports/fail_*.md
+        - workspace/reports/charts/*.html
+
+        Args:
+            task: 当前任务定义。
+            run_index: 运行序号。
+
+        Returns:
+            归档目录路径，或 None（无文件可归档时）。
+        """
+        ws = Path(self.workspace_path)
+        reports_dir = ws / "reports"
+        if not reports_dir.exists():
+            return None
+
+        # 收集可归档文件
+        report_files = list(reports_dir.glob("report_*.md"))
+        fail_files = list(reports_dir.glob("fail_*.md"))
+        chart_dir = reports_dir / "charts"
+        chart_files = (
+            list(chart_dir.glob("*.html")) if chart_dir.exists() else []
+        )
+
+        all_files = report_files + fail_files + chart_files
+        if not all_files:
+            return None
+
+        # 目标路径
+        dest_dir = (
+            self._artifact_base
+            / task.id
+            / self.arm
+            / f"run{run_index}"
+        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制文件
+        for f in all_files:
+            dest = dest_dir / f.name
+            try:
+                shutil.copy2(f, dest)
+            except OSError:
+                pass
+
+        # 图表文件保持目录结构
+        if chart_files:
+            chart_dest = dest_dir / "charts"
+            chart_dest.mkdir(parents=True, exist_ok=True)
+            for f in chart_files:
+                try:
+                    shutil.copy2(f, chart_dest / f.name)
+                except OSError:
+                    pass
+
+        return str(dest_dir.resolve())
 
     def _append_jsonl(self, result: BenchmarkResult) -> None:
         """追加单行 JSON 到 JSONL 文件（线程安全）。
@@ -428,14 +602,17 @@ class BenchmarkRunner:
             "task_id": result.task_id,
             "success": result.success,
             "completed": result.completed,
+            "aborted": result.aborted,
             "retry_count": result.retry_count,
             "elapsed_seconds": result.elapsed_seconds,
             "error": result.error,
             "output_keywords_found": result.output_keywords_found,
             "template_keywords_found": result.template_keywords_found,
             "report_path": result.report_path,
+            "archive_path": result.archive_path,
             "run_index": result.run_index,
             "arm": result.arm,
+            "git_commit": self._git_commit,
             "needs_manual_review": result.needs_manual_review,
         }
         if result.token_usage is not None:

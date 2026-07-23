@@ -29,6 +29,7 @@ from src.benchmark.validators import (
 )
 from src.benchmark.runner import BenchmarkRunner, BenchmarkTimeoutError
 from src.benchmark.metrics import MetricsCollector
+from src.benchmark.reporter import ReportGenerator
 
 
 # ── 测试夹具 ──────────────────────────────────────────────
@@ -398,3 +399,226 @@ class TestBenchmarkRunner:
             for line in lines:
                 record = json.loads(line)
                 assert "task_id" in record
+
+
+# ── 失败否决测试（Feature: ABORT → success=False） ──
+
+
+class TestFailureVeto:
+    """失败否决：ABORT 或 fail_*.md → success 必须为 False。"""
+
+    def test_abort_human_feedback_vetoes_success(self) -> None:
+        """结果词全中但 human_feedback=="ABORT" 时 success=False。"""
+        task = BenchmarkTask(
+            id="BA-TEST",
+            category="data_analysis",
+            query="分析数据",
+            expected_keywords=["sales", "均值", "标准差"],
+        )
+        state = {
+            "execution_result": "sales 统计：均值 100，标准差 20\n分析完成",
+            "final_report": "报告：sales 分析……",
+            "error": None,
+            "retry_count": 1,
+            "human_feedback": "ABORT",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = validate_task_result(task, state, 5.0, tmpdir)
+            # completed 仍为 True（有输出），但 ABORT 否决了 success
+            assert result.completed is True
+            assert result.success is False
+            assert result.aborted is True
+            # 关键词仍然全中
+            assert set(result.output_keywords_found) == {"sales", "均值", "标准差"}
+
+    def test_fail_report_vetoes_success(self) -> None:
+        """即使 human_feedback 未透传，存在 fail_*.md 也应判定 aborted → success=False。"""
+        task = BenchmarkTask(
+            id="CG-TEST",
+            category="code_generation",
+            query="计算 EOQ",
+            expected_keywords=["EOQ", "223"],
+        )
+        state = {
+            "execution_result": "EOQ = 223.61",
+            "final_report": "结果分析中……",
+            "error": None,
+            "retry_count": 0,
+            "human_feedback": None,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 创建 fail_*.md 模拟 ABORT 场景
+            reports_dir = Path(tmpdir) / "reports"
+            reports_dir.mkdir()
+            (reports_dir / "fail_20260723_120000.md").write_text("# 任务中止报告")
+            result = validate_task_result(task, state, 3.0, tmpdir)
+            assert result.completed is True
+            assert result.success is False
+            assert result.aborted is True
+
+    def test_happy_path_unaffected(self) -> None:
+        """无 ABORT、无 fail_*.md → 原来的 success 逻辑不变。"""
+        task = BenchmarkTask(
+            id="CG-TEST",
+            category="code_generation",
+            query="计算 EOQ",
+            expected_keywords=["EOQ", "223"],
+        )
+        state = {
+            "execution_result": "EOQ = 223.61",
+            "final_report": "报告",
+            "error": None,
+            "retry_count": 0,
+            "human_feedback": None,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = validate_task_result(task, state, 2.0, tmpdir)
+            assert result.completed is True
+            assert result.success is True
+            assert result.aborted is False
+
+    def test_aborted_field_in_jsonl(self) -> None:
+        """JSONL 记录应包含 aborted 和 git_commit 字段。"""
+        task = BenchmarkTask(
+            id="CG-01", category="code_generation",
+            query="计算 EOQ", expected_keywords=["EOQ"], timeout=5,
+        )
+        mock_state = {
+            "execution_result": "EOQ = 223.61",
+            "final_report": "报告内容",
+            "error": None,
+            "retry_count": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runner = BenchmarkRunner([task], workspace_path=tmpdir, output_dir=tmpdir)
+            with patch("src.agent.graph.run", return_value=mock_state):
+                runner.run_all()
+
+            jsonl_files = list(Path(tmpdir).glob("benchmark_*.jsonl"))
+            assert len(jsonl_files) == 1
+            with open(jsonl_files[0], encoding="utf-8") as f:
+                record = json.loads(f.readline())
+            assert "aborted" in record
+            assert record["aborted"] is False
+            assert "git_commit" in record
+            # git_commit 应为非空（在有 git 的仓库中）
+            assert isinstance(record["git_commit"], str)
+
+    def test_aborted_shows_in_report(self) -> None:
+        """Markdown/HTML 报告应展示 aborted 和 archive_path 字段。"""
+        mc = MetricsCollector()
+        r = BenchmarkResult(
+            task_id="BA-01", success=False, completed=True,
+            aborted=True, retry_count=1, elapsed_seconds=30.0,
+            error="KeyError: 'col'", output_keywords_found=["sales"],
+            archive_path="/tmp/archives/BA-01/run1",
+        )
+        mc.record(r)
+        gen = ReportGenerator()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_path = str(Path(tmpdir) / "report.md")
+            md = gen.generate_md(mc, md_path)
+            # 中止标记
+            assert "🛑" in md
+            # 归档路径
+            assert "/tmp/archives/BA-01/run1" in md
+            # HTML 同理
+            html_path = str(Path(tmpdir) / "report.html")
+            html = gen.generate_html(mc, html_path)
+            assert "🛑" in html
+            assert "/tmp/archives/BA-01/run1" in html
+
+
+# ── 归档持久化测试 ──
+
+
+class TestArtifactArchive:
+    """归档目录在清理后仍保留报告文件。"""
+
+    def test_archive_preserves_files_after_cleanup(self) -> None:
+        """_archive_artifacts 复制报告 → _cleanup_workspace 删除后归档仍存在。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir) / "workspace"
+            reports_dir = ws / "reports"
+            reports_dir.mkdir(parents=True)
+            charts_dir = reports_dir / "charts"
+            charts_dir.mkdir(parents=True)
+
+            # 创建模拟产出
+            (reports_dir / "report_20260723_120000.md").write_text("# report")
+            (charts_dir / "chart_bar.html").write_text("<html>bar</html>")
+
+            arch_dir = Path(tmpdir) / "results" / "artifacts"
+            arch_dir.mkdir(parents=True)
+
+            task = BenchmarkTask(
+                id="BA-TEST", category="data_analysis",
+                query="分析", expected_keywords=["x"],
+            )
+            runner = BenchmarkRunner([task], workspace_path=str(ws), output_dir=str(Path(tmpdir) / "results"))
+            # 手动设 batch_id 避免 git 依赖
+            runner.batch_id = "20260723_test_nogit"
+            runner._artifact_base = arch_dir / runner.batch_id
+
+            archive_path = runner._archive_artifacts(task, run_index=1)
+            assert archive_path is not None
+            assert Path(archive_path).exists()
+
+            # 验证归档文件存在
+            assert (Path(archive_path) / "report_20260723_120000.md").exists()
+            assert (Path(archive_path) / "charts" / "chart_bar.html").exists()
+
+            # 清理原始 workspace 的 reports
+            runner._cleanup_workspace()
+            assert not reports_dir.exists()  # 源已删除
+
+            # 但归档目录中的文件仍在（稍等以确保文件系统同步）
+            assert (Path(archive_path) / "report_20260723_120000.md").exists()
+            assert (Path(archive_path) / "charts" / "chart_bar.html").exists()
+
+    def test_archive_handles_empty_reports(self) -> None:
+        """无产出时 _archive_artifacts 返回 None 不报错。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = Path(tmpdir) / "workspace"
+            ws.mkdir()
+            task = BenchmarkTask(
+                id="X", category="data_analysis", query="", expected_keywords=[],
+            )
+            runner = BenchmarkRunner([task], workspace_path=str(ws), output_dir=str(Path(tmpdir) / "results"))
+            runner.batch_id = "test"
+            runner._artifact_base = Path(tmpdir) / "results" / "artifacts" / runner.batch_id
+
+            result = runner._archive_artifacts(task, run_index=1)
+            assert result is None
+
+    def test_manifest_written_on_run_all(self) -> None:
+        """run_all 结束后写入 manifest.json。"""
+        mock_state = {
+            "execution_result": "ok",
+            "final_report": "report",
+            "error": None,
+            "retry_count": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            task = BenchmarkTask(
+                id="CG-01", category="code_generation",
+                query="test", expected_keywords=["ok"], timeout=5,
+            )
+            runner = BenchmarkRunner([task], workspace_path=tmpdir, output_dir=tmpdir)
+            with patch("src.agent.graph.run", return_value=mock_state):
+                runner.run_all()
+
+            manifest_path = runner._artifact_base / "manifest.json"
+            assert manifest_path.exists()
+
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            assert "batch_id" in manifest
+            assert "git_commit" in manifest
+            assert "git_dirty" in manifest
+            assert "tasks" in manifest
+            assert "arm_config" in manifest
+            assert "metrics_summary" in manifest
+            assert len(manifest["tasks"]) == 1
+            assert manifest["tasks"][0]["id"] == "CG-01"

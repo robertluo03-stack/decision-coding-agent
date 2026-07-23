@@ -45,6 +45,7 @@ class MetricsCollector:
             - total: 总结果数
             - completed: 已完成数
             - succeeded: 成功数
+            - aborted: 中止数
             - completion_rate: 完成率
             - success_rate: 成功率
             - avg_retry_count: 平均重试次数
@@ -61,6 +62,7 @@ class MetricsCollector:
                 "total": 0,
                 "completed": 0,
                 "succeeded": 0,
+                "aborted": 0,
                 "completion_rate": 0.0,
                 "success_rate": 0.0,
                 "avg_retry_count": 0.0,
@@ -77,6 +79,7 @@ class MetricsCollector:
 
         completed = sum(1 for r in self.results if r.completed)
         succeeded = sum(1 for r in self.results if r.success)
+        aborted_count = sum(1 for r in self.results if r.aborted)
 
         retries = [r.retry_count for r in self.results]
         elapsed = [r.elapsed_seconds for r in self.results]
@@ -142,6 +145,7 @@ class MetricsCollector:
                 "task_id": r.task_id,
                 "success": r.success,
                 "completed": r.completed,
+                "aborted": r.aborted,
                 "retry_count": r.retry_count,
                 "elapsed_seconds": round(r.elapsed_seconds, 2),
                 "error": r.error,
@@ -150,6 +154,7 @@ class MetricsCollector:
                 "run_index": r.run_index,
                 "arm": r.arm,
                 "needs_manual_review": r.needs_manual_review,
+                "archive_path": r.archive_path,
             }
             if r.token_usage is not None:
                 detail["token_usage"] = r.token_usage
@@ -161,6 +166,7 @@ class MetricsCollector:
             "total": total,
             "completed": completed,
             "succeeded": succeeded,
+            "aborted": aborted_count,
             "completion_rate": round(completed / total, 2),
             "success_rate": round(succeeded / total, 2),
             "avg_retry_count": round(sum(retries) / total, 2),
