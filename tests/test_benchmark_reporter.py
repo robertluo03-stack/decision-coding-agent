@@ -251,6 +251,76 @@ class TestJSONLToReport:
 class TestRunnerWithUIMock:
     """Runner use_ui 参数 mock 测试。"""
 
+    def test_missing_keywords_computed_from_expected(self) -> None:
+        """Bug 1 回归测试：缺词 = expected_keywords − output_keywords_found。"""
+        collector = MetricsCollector()
+        r = BenchmarkResult(
+            task_id="BA-01",
+            success=False,
+            completed=True,
+            retry_count=0,
+            elapsed_seconds=12.0,
+            output_keywords_found=["sales", "均值", "标准差"],
+            expected_keywords=["sales", "均值", "标准差", "销量"],
+        )
+        r.category = "data_analysis"  # type: ignore[attr-defined]
+        collector.record(r)
+
+        gen = ReportGenerator()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            md = gen.generate_md(collector, str(path))
+
+            # 关键断言：缺失词 = 期望 − 命中 = ["销量"]
+            assert "缺销量" in md, (
+                f"Bug 1 回归失败：报告应显示 '缺销量'（expected − found），"
+                f"而不是打印 found 列表。"
+                f"报告片段: {md[md.find('BA-01'):][:200]}"
+            )
+            assert "缺sales、均值、标准差" not in md, (
+                f"Bug 1 回归失败：不应将命中词列表输出为缺失词。"
+            )
+            # "销量" 在命中列表中不存在，所以不该作为命中出现
+            assert "销量" in md  # 应出现在缺失列表中
+
+    def test_category_table_completion_before_success(self) -> None:
+        """Bug 2 回归测试：分类表头 完成率|成功率 对齐正确。"""
+        collector = MetricsCollector()
+        r = BenchmarkResult(
+            task_id="BA-01",
+            success=False,
+            completed=True,
+            retry_count=0,
+            elapsed_seconds=12.0,
+            output_keywords_found=["sales"],
+            expected_keywords=["sales", "均值", "标准差", "销量"],
+        )
+        r.category = "data_analysis"  # type: ignore[attr-defined]
+        collector.record(r)
+
+        gen = ReportGenerator()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.html"
+            html = gen.generate_html(collector, str(path))
+
+            # 分类统计表：行 <td>数据分析</td><td>1</td><td>100%</td><td>0%</td>
+            # 即 数据量 | 完成率100% | 成功率0%
+            import re
+            row_match = re.search(
+                r"<td>数据分析</td><td>1</td><td>(\d+%)</td><td>(\d+%)</td>",
+                html,
+            )
+            assert row_match is not None, "分类统计表应包含数据分析行"
+            completion_cell = row_match.group(1)  # 完成率
+            success_cell = row_match.group(2)  # 成功率
+            # 1 条结果 completed=True, success=False → 完成率100%, 成功率 0%
+            assert completion_cell == "100%", (
+                f"Bug 2 回归失败：第 3 列应为完成率 100%，实际 {completion_cell}"
+            )
+            assert success_cell == "0%", (
+                f"Bug 2 回归失败：第 4 列应为成功率 0%，实际 {success_cell}"
+            )
+
     def test_runner_use_ui_false_default(self) -> None:
         """默认 use_ui=False，不创建 UI。"""
         from src.benchmark.runner import BenchmarkRunner

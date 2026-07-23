@@ -151,6 +151,7 @@ class MetricsCollector:
                 "error": r.error,
                 "output_keywords_found": r.output_keywords_found,
                 "template_keywords_found": r.template_keywords_found,
+                "expected_keywords": r.expected_keywords,
                 "run_index": r.run_index,
                 "arm": r.arm,
                 "needs_manual_review": r.needs_manual_review,

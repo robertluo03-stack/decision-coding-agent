@@ -631,6 +631,7 @@ class BenchmarkRunner:
             "error": result.error,
             "output_keywords_found": result.output_keywords_found,
             "template_keywords_found": result.template_keywords_found,
+            "expected_keywords": result.expected_keywords,
             "report_path": result.report_path,
             "archive_path": result.archive_path,
             "run_index": result.run_index,

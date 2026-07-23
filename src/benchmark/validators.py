@@ -92,6 +92,7 @@ def validate_task_result(
         error=str(error) if error else None,
         output_keywords_found=keywords_found,
         template_keywords_found=template_found,
+        expected_keywords=task.expected_keywords,
         report_path=report_path,
         needs_manual_review=task.needs_manual_review,
     )

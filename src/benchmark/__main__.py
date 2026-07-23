@@ -211,6 +211,19 @@ def _cmd_report() -> None:
     # ── 解析 JSONL → MetricsCollector ──
     from src.benchmark.models import BenchmarkResult
     from src.benchmark.metrics import MetricsCollector
+    from src.benchmark.tasks import get_default_tasks
+
+    # 构建 task_id → task 映射（用于回填 expected_keywords / category）
+    task_map: dict[str, object] = {}
+    for t in get_default_tasks():
+        task_map[t.id] = t
+    # 对抗任务也加载
+    try:
+        from src.benchmark.tasks import get_adversarial_tasks
+        for t in get_adversarial_tasks():
+            task_map[t.id] = t
+    except ImportError:
+        pass
 
     collector = MetricsCollector()
     with open(jsonl_path, encoding="utf-8") as f:
@@ -219,8 +232,15 @@ def _cmd_report() -> None:
             if not line:
                 continue
             record = json.loads(line)
+            task_id = record["task_id"]
+
+            # 从任务定义回填 expected_keywords（旧 JSONL 兼容）
+            expected_kw = record.get("expected_keywords", [])
+            if not expected_kw and task_id in task_map:
+                expected_kw = task_map[task_id].expected_keywords
+
             result = BenchmarkResult(
-                task_id=record["task_id"],
+                task_id=task_id,
                 success=record.get("success", False),
                 completed=record.get("completed", False),
                 aborted=record.get("aborted", False),
@@ -229,6 +249,7 @@ def _cmd_report() -> None:
                 error=record.get("error"),
                 output_keywords_found=record.get("output_keywords_found", []),
                 template_keywords_found=record.get("template_keywords_found", []),
+                expected_keywords=expected_kw,
                 report_path=record.get("report_path"),
                 archive_path=record.get("archive_path"),
                 run_index=record.get("run_index", 1),
@@ -237,6 +258,9 @@ def _cmd_report() -> None:
                 numeric_value=record.get("numeric_value"),
                 needs_manual_review=record.get("needs_manual_review", False),
             )
+            # 回填 category（旧 JSONL 兼容）
+            if task_id in task_map:
+                result.category = task_map[task_id].category  # type: ignore[attr-defined]
             collector.record(result)
 
     metrics = collector.compute()

@@ -86,8 +86,8 @@ class ReportGenerator:
             cat_label = _cat_label(cat)
             lines.append(
                 f"| {cat_label} | {stats['count']} | "
-                f"{_pct(stats['success_rate'])} | "
                 f"{_pct(stats['completion_rate'])} | "
+                f"{_pct(stats['success_rate'])} | "
                 f"{stats['avg_retry_count']} |"
             )
         lines.append("")
@@ -121,7 +121,8 @@ class ReportGenerator:
                 err = str(detail["error"])[:40]
                 verify = _escape_pipe(err)
             else:
-                verify = _escape_pipe(f"缺{'、'.join(keywords_found) or '全部'}")
+                missing = _compute_missing_keywords(detail)
+                verify = _escape_pipe(f"缺{'、'.join(missing) or '全部'}")
             tpl_str = f"{len(template_found)} 词" if template_found else "—"
             review_str = "⚠️ 是" if needs_review else ""
             lines.append(
@@ -146,9 +147,9 @@ class ReportGenerator:
                     lines.append(f"- **{d['task_id']}** [{d.get('arm', '')} run={d.get('run_index', '')}]{aborted_mark}{review_note}: "
                                  f"{_escape_pipe(str(err)[:200])}{archive_note}")
                 else:
-                    keywords_found = d.get("output_keywords_found", [])
+                    missing = _compute_missing_keywords(d)
                     lines.append(f"- **{d['task_id']}**{review_note}{aborted_mark}: 结果词未命中 "
-                                 f"({'、'.join(keywords_found) or '全部'}) — 缺失{archive_note}")
+                                 f"({'、'.join(missing) or '全部'}) — 缺失{archive_note}")
         else:
             lines.append("无失败任务。")
         lines.append("")
@@ -333,7 +334,8 @@ class ReportGenerator:
             elif detail.get("error"):
                 verify = str(detail["error"])[:60].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             else:
-                verify = "未通过"
+                missing = _compute_missing_keywords(detail)
+                verify = f"缺{'、'.join(missing) or '全部'}"
             tpl_str = f"{len(template_found)} 词" if template_found else "—"
             abort_str = "🛑" if aborted_flag else ""
             review_str = "⚠️ 复核" if needs_review else ""
@@ -356,7 +358,7 @@ class ReportGenerator:
                 aborted_mark = " 🛑已中止" if d.get("aborted") else ""
                 archive_path = d.get("archive_path")
                 archive_note = f" [归档: {archive_path}]" if archive_path else ""
-                safe_err = str(err)[:200].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if err else "结果词未命中"
+                safe_err = str(err)[:200].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if err else f"结果词未命中 — 缺{'、'.join(_compute_missing_keywords(d)) or '全部'}"
                 parts.append(
                     f"<li><strong>{d['task_id']}</strong> [{d.get('arm', '')} run={d.get('run_index', '')}]{aborted_mark}{review_note}: {safe_err}{archive_note}</li>"
                 )
@@ -469,6 +471,37 @@ def _pct(rate: float | None) -> str:
     if rate is None:
         return "N/A"
     return f"{round(rate * 100)}%"
+
+
+def _compute_missing_keywords(detail: dict) -> list[str]:
+    """计算缺失关键词 = expected_keywords − output_keywords_found。
+
+    匹配口径与 validator 完全一致（大小写不敏感、包含关系匹配），
+    但此处仅在 expected_keywords 中做简单的 contains 剔除：
+    对每个 expected 词，若在 output_keywords_found 中找到（大小写不敏感、
+    substring），视为已命中，否则归入缺失。
+
+    Args:
+        detail: 单个 task_detail（含 expected_keywords 和 output_keywords_found）。
+
+    Returns:
+        缺失的关键词列表（按 expected_keywords 原始顺序，保持大小写）。
+    """
+    expected = detail.get("expected_keywords", [])
+    found = detail.get("output_keywords_found", [])
+    found_lower = [kw.lower() for kw in found]
+
+    missing: list[str] = []
+    for kw in expected:
+        kw_lower = kw.lower()
+        is_found = False
+        for fl in found_lower:
+            if kw_lower in fl or fl in kw_lower:
+                is_found = True
+                break
+        if not is_found:
+            missing.append(kw)
+    return missing
 
 
 def _escape_pipe(text: str) -> str:

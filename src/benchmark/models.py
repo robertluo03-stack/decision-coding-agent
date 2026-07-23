@@ -52,6 +52,7 @@ class BenchmarkResult:
         error: 错误信息（None 表示无错误）。
         output_keywords_found: 实际找到的 expected_keywords（结果词）子集。
         template_keywords_found: 实际找到的 template_keywords（机制词）子集。
+        expected_keywords: 该任务的预期结果词全集（用于报告层计算缺失词）。
         report_path: 生成的报告文件路径（None 表示无报告）。
         run_index: 重复运行序号（1-based，默认 1）。
         arm: 实验臂名称（"routing_on" | "routing_off"）。
@@ -70,6 +71,7 @@ class BenchmarkResult:
     error: str | None = None
     output_keywords_found: list[str] = field(default_factory=list)
     template_keywords_found: list[str] = field(default_factory=list)
+    expected_keywords: list[str] = field(default_factory=list)
     report_path: str | None = None
     run_index: int = 1
     arm: str = "routing_on"
