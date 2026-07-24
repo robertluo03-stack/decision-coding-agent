@@ -37,7 +37,9 @@ Thumbs.db
 logs/
 
 # Benchmark results
-results/
+results/artifacts/
+results/*.html
+results/console_*.txt
 
 # Examples output
 examples/output/
