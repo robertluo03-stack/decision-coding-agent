@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DecisionCoder 是一个面向经营决策与运筹优化的垂直 Coding Agent。基于 LangGraph StateGraph 编排 Plan-Code-Execute-Debug-Report 闭环，LLM 通过 DeepSeek API 调用。
 
-- **当前阶段**：已完成 Week 7（工程化）
-- **累计测试数**：以 pytest 实跑为准（全部通过，零回归）
+- **当前阶段**：已完成 Week 8（规则路由接线 + 三臂实验，2026-07-24）
+- **累计测试数**：569 tests（pytest --collect-only 全量收集, 2026-07-24, 全部通过零回归）
+- **Commit 数**：75（首次提交 2026-06-21）
 
 ## 常用命令
 
@@ -75,16 +76,23 @@ Planner → Coder → Executor → [route_after_executor]
 - **NodeTracer**：函数包装器，零侵入追踪节点执行状态
 - 启用方式：`main.py --rich` 或 `build_graph(use_ui=True, ui_manager=ui)`
 
-### Benchmark 层（Week 6 新增）
+### Benchmark 层（Week 6 新增，Week 8 扩展）
 
 [src/benchmark/](src/benchmark/) — 自动化评测框架：
-- **10 个预定义任务**：5 数据分析（BA-01~05）+ 5 代码生成（CG-01~05）
+- **17 个预定义任务**：5 数据分析（BA-01~05）+ 5 代码生成（CG-01~05）+ 7 对抗（ADV-01~07，5 同任务多说法 + 2 模板外兜底）
 - **BenchmarkRunner**：逐个执行任务，`threading.Event.wait(timeout)` 跨平台超时
-- **MetricsCollector**：完成率/成功率/平均重试/平均耗时 + 按类别分组
+- **MetricsCollector**：完成率/成功率/平均重试/平均耗时 + 按类别分组 + 按 arm 分组
 - **ReportGenerator**：Markdown + HTML 报告（进度条/卡片/徽章，内联 CSS）
-- **validate_task_result**：关键词匹配（大小写不敏感 + 浮点数宽松匹配）
+- **validate_task_result**：关键词匹配（不区分大小写 + 浮点数宽松匹配）
+- **结果词/机制词双轨校验**：`expected_keywords`（结果词）全部命中 ⇒ success；`template_keywords`（机制词）单独统计 template_hit_rate
+- **失败否决**：ABORT / fail_*.md 产出 → success=False
 - JSONL 逐行追加，支持断点续跑
-- CLI：`python -m benchmark run` / `python -m benchmark report <jsonl>`
+- **批次归档**：`results/artifacts/<时间戳>_<git哈希>/` 含 manifest.json
+- **token_tracker.py**：monkey-patch `ChatDeepSeek.invoke` 捕获真实 token 用量
+- **numeric_extractor.py**：数值一致率，中位数 ±5% 口径
+- **HITL 自动应答**：`DECISIONCODER_HITL_AUTO` 环境变量，benchmark 无人值守
+- **双臂对照**：`run_both()` — routing_on / routing_off 顺序执行，共享 batch_id
+- CLI：`python -m benchmark run` / `python -m benchmark run --both` / `python -m benchmark run --both --adversarial` / `python -m benchmark report <jsonl>`
 
 ### AgentState
 
@@ -136,6 +144,10 @@ Executor 三路径：
 | [text_to_sql.py](src/domain/text_to_sql.py) | `run_text_to_sql(query, csv_path)` | NL→Schema→LLM SQL→安全检查→DuckDB执行 |
 | [templates/data_analysis.py](src/domain/templates/data_analysis.py) | `run_analysis(file_path)` | 一键分析：读取→质量→EDA→图表→报告 |
 | [templates/inventory_eoq.py](src/domain/templates/inventory_eoq.py) | `calculate(EOQParams)` | EOQ 经济订货批量 |
+| [templates/demand_forecast.py](src/domain/templates/demand_forecast.py) | `forecast(ForecastParams)` / `auto_forecast(history, periods)` | 需求预测（多元回归+ML+平均） |
+| [templates/safety_stock.py](src/domain/templates/safety_stock.py) | `calculate_safety_stock(SafetyStockParams)` | 安全库存（Z分数法） |
+| [templates/reorder_point.py](src/domain/templates/reorder_point.py) | `calculate(ROPParams)` | 补货点（ROP） |
+| [templates/inventory_pipeline.py](src/domain/templates/inventory_pipeline.py) | `run_inventory_pipeline(InventoryPipelineParams)` | 库存分析流水线（多SKU/多仓） |
 
 ### 安全纵深防御
 
@@ -152,6 +164,18 @@ SQL 安全（Text-to-SQL）：LLM 层约束 + 12种危险关键字正则 + SELEC
 
 1. **LLM 调用失败** → 规则回退（Debugger: 14种 `_diagnose_by_rule` 含 DuckDB 错误 / 多种 `_fix_by_rule` 策略）
 2. **LLM 生成不安全代码** → Coder 后置 `_has_dangerous_code()`（委托给 security_checker）→ 回退安全代码 `_generate_fallback_code()`
+
+### 规则路由层（2026-07-22 接线）
+
+在 Coder 调用 LLM 之前，先尝试模板匹配 + 参数提取：
+
+- **`_run_rule_routing(query)`** (coder.py:223)：调用 `src.domain.template_matcher.match_template` 和 `src.domain.param_extractor.extract_params_for_template`
+- **`_TEMPLATE_GUIDANCE`** (coder_user.py:16)：5 种模板类型（eoq / forecast / safety_stock / reorder_point / data_analysis），映射到 display_name + import 与调用指引
+- **`_build_routing_guidance()`** (coder_user.py:96)：将命中结果以【规则路由信息】块注入 Coder user message，含识别任务类型、置信度、已提取参数、模板调用指引
+- **未命中回退**：`template_type == UNKNOWN` → 返回 (None, None)，Coder 保持纯 LLM 自由路由
+- **环境开关**：`DECISIONCODER_NO_ROUTING=true` 跳过规则路由（实验对照，见 coder.py:239）
+
+template_matcher (template_matcher.py:130)：基于关键词加权评分的模板匹配，5 种模板类型（EOQ / FORECAST / DATA_ANALYSIS / SAFETY_STOCK / REORDER_POINT + UNKNOWN），`_CONFIDENCE_THRESHOLD = 1.5`，低于阈值返回 UNKNOWN。
 
 ### MCP 工具层
 
@@ -208,3 +232,25 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 
 - **[DEV_DESIGN.md](DEV_DESIGN.md)** — 设计决策记录（27条）、阶段规划、接口契约、安全体系、API参考、架构演进表
 - **[DEV_LOG.md](DEV_LOG.md)** — 按日期记录的开发日志 + 25条踩坑记录 + Benchmark数据
+- **[docs/experiment_three_arm.md](docs/experiment_three_arm.md)** — 三臂实验设计与结果报告
+- **[results/review_arm_a_20260724.md](results/review_arm_a_20260724.md)** — A 臂复核终审报告（19 条逐条裁决）
+
+## A 臂脚本（Claude Code 裸用基线）
+
+[scripts/run_arm_a.py](scripts/run_arm_a.py) — 与 B/C 臂公平对照：
+- `claude -p --output-format json --dangerously-skip-permissions` 子进程调用
+- 隔离工作目录 `arm_a_workspace/`（仓库外，仅 3 个 CSV 数据文件）
+- `--smoke` 冒烟（CG-01 × 1）/ `--full` 全量（17 任务 × 3 = 51 次）
+- `--timeout-cap <秒>` 统一超时上限（正式口径 600s）
+- 判定域差异：A 臂扫 claude 最终答复文本；B/C 臂扫 stdout + 报告全文
+
+## 已知问题与迭代清单
+
+取自 [results/review_arm_a_20260724.md](results/review_arm_a_20260724.md) 质性发现 §7：
+
+1. **Reporter 内联子报告结果**：当前 `execution_result`（stdout）与 `final_report`（Markdown）分开存储，Reporter 未将执行阶段的关键数值内联到报告中，导致关键词扫描域仅覆盖 `execution_result + final_report` 合并文本而未在报告正文中重复关键数值。
+2. **归档完整性**：A 臂生成的 HTML/脚本文件仍在 `arm_a_workspace/` 中，被后续运行覆写，未按 run 归档。B/C 臂的 `_archive_artifacts` 仅归档 reports/ 目录下的 `.md` 和 `.html` 图表文件，不包含 stdout 文本、生成的 Python 代码、其他生成文件。
+3. **验证器判定域文档化**：A 臂扫描 `result` 字段（claude 最终答复文本）；B/C 臂扫描 `execution_result`（stdout）+ `final_report`（Markdown 报告）。ADV-06 run3 的关键词存在于代码文件（`palindrome.py`）不在答复文本，此差异需在 validators.py 与 run_arm_a.py 的 docstring 中明确记载。
+4. **manifest 双臂记录**：当前 `run_both()` 共享一个 manifest，但仅记录 last-write 的 arm_config。应改为记录 arm_sequence 数组。
+5. **关键词双语化**：`expected_keywords` 含英文缩写（"bar" / "ROP" / "MAPE" / "SELECT" / "AVG"）时，A 臂用自然语言替换这些词（"柱状图"/"Reorder Point"），属函数正确行为却被判失败。应补充等效中文关键词或放宽为 (keyword, weight) 评分制。
+6. **`_find_generated_files` 按 task_id 过滤**：当前取 `workspace/reports/` 下全局 mtime 最新的文件，多任务顺序执行时可能将前一个任务的报告误归入当前任务。应改为按 task_id 前缀或文件名 timestamp 过滤。
