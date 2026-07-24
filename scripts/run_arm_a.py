@@ -653,13 +653,15 @@ def write_manifest(
     git_dirty: bool,
     claude_version: str,
     tasks: list[dict],
+    timeout_cap: int | None = None,
 ) -> None:
     """Write manifest.json for the batch.
 
     Requirement (spec §7): git_commit、git_dirty、claude --version 输出、
-    模型端点描述 "DeepSeek v4 pro"（不记录任何密钥）、任务清单、日期。
+    模型端点描述（不记录任何密钥）、任务清单、日期。
+    若指定 --timeout-cap，写入 timeout_cap_seconds 和 timeout_note。
     """
-    manifest = {
+    manifest: dict = {
         "batch_id": batch_id,
         "git_commit": git_commit,
         "git_dirty": git_dirty,
@@ -680,6 +682,11 @@ def write_manifest(
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if timeout_cap is not None:
+        manifest["timeout_cap_seconds"] = timeout_cap
+        manifest["timeout_note"] = (
+            f"{timeout_cap}s 为安全阀而非任务约束；首批 60s 口径批次保留作敏感性对照"
+        )
     manifest_path = batch_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -718,7 +725,7 @@ def get_git_info() -> tuple[str, bool]:
 # Smoke test
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_smoke(workspace: Path) -> None:
+def run_smoke(workspace: Path, timeout_cap: int | None = None) -> None:
     """CG-01 × 1 smoke test — verify endpoint, fields, keywords, cost/token.
 
     Requirement (spec: 冒烟): 仅 CG-01 × 1 次，打印捕获到的 JSON 字段清单与
@@ -735,6 +742,10 @@ def run_smoke(workspace: Path) -> None:
         "timeout": 60,
         "needs_manual_review": False,
     }
+    if timeout_cap is not None:
+        original = task["timeout"]
+        task["timeout"] = timeout_cap
+        print(f"\n[INFO] timeout override: {original}s → {timeout_cap}s (--timeout-cap)")
 
     print("\n" + "=" * 70)
     print("SMOKE TEST: CG-01 × 1")
@@ -836,13 +847,23 @@ def _format_field_value(val, max_len: int = 300) -> str:
 # Full batch
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_full_batch(workspace: Path) -> None:
+def run_full_batch(workspace: Path, timeout_cap: int | None = None) -> None:
     """Run all 17 tasks × 3 repetitions = 51 runs, with archival and JSONL.
 
     Requirement (spec §8): 跑批前先提交本脚本，保证 manifest 落在干净哈希上。
+
+    Args:
+        workspace: Isolated workspace directory.
+        timeout_cap: If set, overrides all per-task timeouts to this value (seconds).
     """
     tasks = get_all_tasks()
     total_runs = len(tasks) * 3
+
+    # Apply timeout override
+    if timeout_cap is not None:
+        for t in tasks:
+            t["timeout"] = timeout_cap
+        print(f"[INFO] All task timeouts overridden to {timeout_cap}s")
 
     # Pre-flight checks
     claude_version = check_claude_cli()
@@ -908,7 +929,7 @@ def run_full_batch(workspace: Path) -> None:
             print(f"{status}  kw={kw_str}  {elapsed:.1f}s{fail_reason}")
 
     # Write manifest
-    write_manifest(batch_dir, batch_id, git_commit, git_dirty, claude_version, tasks)
+    write_manifest(batch_dir, batch_id, git_commit, git_dirty, claude_version, tasks, timeout_cap)
 
     # Quick summary from JSONL
     records = []
@@ -940,15 +961,35 @@ def run_full_batch(workspace: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    """Entry point. --smoke for CG-01×1, --full for 51-run batch."""
+    """Entry point. --smoke for CG-01×1, --full for 51-run batch.
+
+    --timeout-cap <秒>  统一覆盖所有任务的超时上限；不指定则维持原口径。
+    """
     if "--smoke" not in sys.argv and "--full" not in sys.argv:
         print("Usage:")
-        print("  python scripts/run_arm_a.py --smoke   # CG-01 × 1 (verify endpoint)")
-        print("  python scripts/run_arm_a.py --full    # 17 tasks × 3 = 51 runs")
+        print("  python scripts/run_arm_a.py --smoke                    # CG-01 × 1 (verify endpoint)")
+        print("  python scripts/run_arm_a.py --full                     # 17 tasks × 3 = 51 runs")
+        print("  python scripts/run_arm_a.py --full --timeout-cap 600   # 全量，统一 600s 超时")
         print("\nRun --smoke first to verify cost/token fields exist.")
         sys.exit(0)
 
     smoke = "--smoke" in sys.argv
+    timeout_cap: int | None = None
+
+    # Parse --timeout-cap <seconds>
+    try:
+        cap_idx = sys.argv.index("--timeout-cap")
+        val = sys.argv[cap_idx + 1]
+        timeout_cap = int(val)
+        if timeout_cap <= 0:
+            print(f"ERROR: --timeout-cap must be positive, got {timeout_cap}")
+            sys.exit(1)
+        print(f"[INFO] --timeout-cap={timeout_cap}s — overriding all per-task timeouts")
+    except (ValueError, IndexError):
+        if "--timeout-cap" in sys.argv:
+            print("ERROR: --timeout-cap requires an integer value in seconds")
+            sys.exit(1)
+        # Not specified — keep original per-task timeouts
 
     print("=" * 70)
     print("Arm A Runner — Claude Code (bare)")
@@ -966,10 +1007,10 @@ def main() -> None:
 
     if smoke:
         # Spec: 冒烟 — 仅 CG-01 × 1，验证字段与端点
-        run_smoke(workspace)
+        run_smoke(workspace, timeout_cap=timeout_cap)
     else:
         # Spec §8: 全量前必须提交本脚本
-        run_full_batch(workspace)
+        run_full_batch(workspace, timeout_cap=timeout_cap)
 
 
 if __name__ == "__main__":
