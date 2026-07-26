@@ -127,8 +127,6 @@ decision-coding-agent/
 ├── README.md
 ├── LICENSE
 ├── CLAUDE.md                       # Claude Code 配置
-├── DEV_DESIGN.md                   # 设计决策记录（55 条）
-├── DEV_LOG.md                      # 按日期记录的开发日志
 ├── src/
 │   ├── agent/                      # LangGraph 编排层
 │   │   ├── nodes/                  # 5 个节点 + Prompt 管理
@@ -171,4 +169,4 @@ decision-coding-agent/
 
 ## License
 
-MIT © 2026 luoshouer
+MIT © 2026 罗手儿 (robertluo03-stack)

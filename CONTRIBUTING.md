@@ -94,5 +94,4 @@ python -m py_compile src/agent/nodes/coder.py
 - [状态机](docs/state-machine.md) — 形式化状态图
 - [安全体系](docs/security.md) — 5 道防线详解
 - [Benchmark](docs/benchmark.md) — 评测框架
-- [设计决策](DEV_DESIGN.md) — 55 条设计决策记录
-- [开发日志](DEV_LOG.md) — 按日期记录的开发历史
+
