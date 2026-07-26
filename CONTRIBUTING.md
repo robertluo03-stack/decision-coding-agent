@@ -6,8 +6,8 @@
 
 ```bash
 # 1. Clone 仓库
-git clone https://github.com/robertluo03-stack/decision-coder.git
-cd decision-coder
+git clone https://github.com/robertluo03-stack/decision-coding-agent.git
+cd decision-coding-agent
 
 # 2. 创建虚拟环境（Python >= 3.11）
 python -m venv .venv
@@ -83,7 +83,7 @@ python -m py_compile src/agent/nodes/coder.py
 
 ## 提交规范
 
-- **Commit message**：`Week X: 简短描述`（如 `Week 7: Docker Compose + docs + cleanup`）
+- **Commit message**：类型前缀 + 简短描述（`feat` / `fix` / `docs` / `exp` / `chore` / `test` / `refactor`，参照近期提交风格）。项目版本管理采用"版本号 + 日期 + 里程碑名"（见 [DEV_DESIGN.md](DEV_DESIGN.md)），不再使用 Week 编号。
 - **分支策略**：直接在 `main` 分支开发（个人项目），大型重构建议开 feature 分支
 - **PR 检查清单**：见 `.github/PULL_REQUEST_TEMPLATE.md`
 
@@ -94,5 +94,5 @@ python -m py_compile src/agent/nodes/coder.py
 - [状态机](docs/state-machine.md) — 形式化状态图
 - [安全体系](docs/security.md) — 5 道防线详解
 - [Benchmark](docs/benchmark.md) — 评测框架
-- [设计决策](DEV_DESIGN.md) — 27 条设计决策记录
+- [设计决策](DEV_DESIGN.md) — 55 条设计决策记录
 - [开发日志](DEV_LOG.md) — 按日期记录的开发历史

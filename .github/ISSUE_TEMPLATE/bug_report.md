@@ -9,7 +9,7 @@ assignees: ''
 ## 环境信息
 - OS: [e.g. Windows 11 / macOS 14 / Ubuntu 22.04]
 - Python: [e.g. 3.11.4]
-- DecisionCoder version: [e.g. 0.7.0]
+- DecisionCoder version: [e.g. 0.8.0]
 
 ## 复现步骤
 1. 运行 '...'

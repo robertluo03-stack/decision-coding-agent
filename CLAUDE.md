@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
+> **仓库规范名称**：本仓库在文档/链接中的规范名称为 **decision-coding-agent**（GitHub 仓库名），与本地目录名无关。任何文档提及仓库路径或 clone 地址时，一律使用 `decision-coding-agent`。
+
 DecisionCoder 是一个面向经营决策与运筹优化的垂直 Coding Agent。基于 LangGraph StateGraph 编排 Plan-Code-Execute-Debug-Report 闭环，LLM 通过 DeepSeek API 调用。
 
 - **当前阶段**：已完成 Week 8（规则路由接线 + 三臂实验，2026-07-24）
@@ -230,7 +232,7 @@ FastMCP server 在 [src/mcp/server.py](src/mcp/server.py)，8 个 Tool 通过 `@
 
 ## 关键文档
 
-- **[DEV_DESIGN.md](DEV_DESIGN.md)** — 设计决策记录（27条）、阶段规划、接口契约、安全体系、API参考、架构演进表
+- **[DEV_DESIGN.md](DEV_DESIGN.md)** — 设计决策记录（55条）、阶段规划、接口契约、安全体系、API参考、架构演进表
 - **[DEV_LOG.md](DEV_LOG.md)** — 按日期记录的开发日志 + 25条踩坑记录 + Benchmark数据
 - **[docs/experiment_three_arm.md](docs/experiment_three_arm.md)** — 三臂实验设计与结果报告
 - **[results/review_arm_a_20260724.md](results/review_arm_a_20260724.md)** — A 臂复核终审报告（19 条逐条裁决）

@@ -6,12 +6,24 @@
 ![Tests](https://img.shields.io/badge/tests-569%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-v0.8-blue)
-![Commits](https://img.shields.io/badge/commits-75-blueviolet)
+![Commits](https://img.shields.io/github/commits/robertluo03-stack/decision-coding-agent)
+
+## 三臂实验结果速览
+
+2026-07-24 完成 17 任务 × 3 重复 × 3 臂（同一基座模型）共 264 次运行的对照实验：
+
+| C 臂（开路由，本架构完整形态） | B 臂（关路由，路由层消融） | A 臂（Claude Code 裸用，通用脚手架基线） |
+|:---:|:---:|:---:|
+| **95.0%** | 88.3% | 86.7% |
+
+> 均为复核口径。token 成本较通用脚手架降低 4~18 倍，耗时快 2.4 倍。
+>
+> 📊 实验报告 [docs/experiment_three_arm.md](docs/experiment_three_arm.md)，原始数据与复核日志见 [results/](results/)。
 
 ## 核心特性
 
 - **LangGraph 状态机**：Planner → Coder → Executive → Debugger → Reporter 五节点闭环，支持错误触发自动循环调试和人在回路中断，retry_count≥2 自动退出避免无限循环
-- **MCP 工具层**：基于 FastMCP 的 8 个标准化 Tool — 文件读写、Python 沙箱执行、CSV/Excel 解析、JSON 处理，完形 MCP 协议标准
+- **MCP 工具层**：基于 FastMCP 的 8 个标准化 Tool — 文件读写、Python 沙箱执行、CSV/Excel 解析、JSON 处理，完整实现 MCP 协议标准
 - **5 道安全防线**：① LLM 语义意图识别 ② AST 语法级危险调用检测 ③ execute 前编译预检 ④ Docker 容器沙箱兜底 ⑤ SQL 注入关键字拦截 — 全链路纵深防御
 - **7 个供应链模板**：EOQ 经济订货批量、需求预测、安全库存、补货点、库存管道流水线、一键分析、Text-to-SQL 自然语言问数；另含 5 种 Plotly 图表（柱状/折线/直方图/散点/热力图）
 - **Rich 终端 UI**：5 节点实时进度条 + 多彩状态表格 + 最多 50 条日志滚动面板 + Markdown 调试面板，非 TTY 环境自动降级为 print
@@ -37,8 +49,8 @@ graph TD
 
 ```bash
 # clone repository
-git clone https://github.com/robertluo03-stack/decision-coder.git
-cd decision-coder
+git clone https://github.com/robertluo03-stack/decision-coding-agent.git
+cd decision-coding-agent
 
 # 安装依赖
 pip install -e .
@@ -106,7 +118,7 @@ python -m benchmark report results.jsonl  # 从 JSONL 生成 MD + HTML 报告
 ## 目录结构
 
 ```
-decision-coder/
+decision-coding-agent/
 ├── main.py                         # CLI 入口
 ├── pyproject.toml                  # 项目元数据与依赖
 ├── Dockerfile                      # Agent 主应用镜像
@@ -115,7 +127,7 @@ decision-coder/
 ├── README.md
 ├── LICENSE
 ├── CLAUDE.md                       # Claude Code 配置
-├── DEV_DESIGN.md                   # 设计决策记录（27 条）
+├── DEV_DESIGN.md                   # 设计决策记录（55 条）
 ├── DEV_LOG.md                      # 按日期记录的开发日志
 ├── src/
 │   ├── agent/                      # LangGraph 编排层
@@ -155,7 +167,7 @@ decision-coder/
 | 文件解析 | `openpyxl`, `python-dotenv` |
 
 - **Python**：>= 3.11
-- **LLM**：DeepSeek-V3（通过 `langchain-deepseek` 调用）
+- **LLM**：DeepSeek-V4-Pro（通过 `langchain-deepseek` 调用）
 
 ## License
 
