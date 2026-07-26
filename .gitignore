@@ -71,3 +71,6 @@ fact_sheet.md
 # Misc
 .mypy_cache/
 .pytest_cache/
+
+%SystemDrive%/
+.claude/
